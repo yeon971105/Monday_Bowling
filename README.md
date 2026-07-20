@@ -1,49 +1,43 @@
 # Monday Bowling
 
-Local-first Monday bowling roster, scoring, money settlement, and history.
-Works on phone as a free home-screen app (PWA).
+Monday bowling roster, scoring, money settlement, and history.
+Works on iPhone as a free home-screen app (PWA).
 
-## Free cloud (phone anywhere)
+**Live:** https://monday-bowling.vercel.app
 
-For a small league this stays on the **free** tiers of:
+## Is the cloud really free?
 
-| Service | Free forever? | What you get |
-|---------|---------------|--------------|
-| [Vercel Hobby](https://vercel.com/pricing) | Yes (personal / non-commercial) | Hosts the website |
-| [Turso Free](https://turso.tech/pricing) | Yes within monthly quotas | Stores your SQLite data in the cloud |
+For this small weekly league app, yes — stay on free plans:
 
-Practical limits for this app: a few dozen people scoring once a week is tiny versus Turso’s free read/write quotas. If you somehow blow past free limits, Turso pauses the DB until you upgrade — it does not silently charge on Free.
+| Service | Cost | Caveat |
+|---------|------|--------|
+| [Vercel Hobby](https://vercel.com/pricing) | $0 | Personal / non-commercial use |
+| [Turso Free](https://turso.tech/pricing) | $0 | Monthly read/write/storage quotas (this app is tiny vs those limits) |
 
-### 1. Create a free Turso database
+Free plans do **not** silently charge. If Turso free quota is ever exceeded, the DB pauses until you upgrade or the month resets.
 
-```powershell
-# install CLI once
-irm get.tur.so/install.ps1 | iex
-turso auth login
-turso db create monday-bowling
-turso db show monday-bowling --url
-turso db tokens create monday-bowling
-```
+## Finish Turso setup (required for data to persist)
 
-Copy the URL and token into `.env.local` (and later into Vercel):
+The site is deployed, but you still need a free Turso database so scores/history survive.
 
-```
-TURSO_DATABASE_URL=libsql://...
-TURSO_AUTH_TOKEN=...
-```
-
-### 2. Deploy to Vercel (free)
+1. Open https://app.turso.tech and sign up with GitHub (free).
+2. Create a database named `monday-bowling`.
+3. Copy **Database URL** and create an **Auth Token**.
+4. In a terminal in this project folder:
 
 ```powershell
-npm i -g vercel
-vercel login
-vercel
-vercel env add TURSO_DATABASE_URL
-vercel env add TURSO_AUTH_TOKEN
-vercel --prod
+npx vercel env add TURSO_DATABASE_URL production
+npx vercel env add TURSO_AUTH_TOKEN production
+npx vercel --prod
 ```
 
-Open the `*.vercel.app` URL on iPhone Safari → Share → **Add to Home Screen**.
+Paste the URL and token when prompted, then redeploy.
+
+## iPhone: use like an app
+
+1. Safari → https://monday-bowling.vercel.app  
+2. Share → **Add to Home Screen**  
+3. Open from the home icon (fullscreen app style)
 
 ## Run locally
 
@@ -53,13 +47,11 @@ npm run db:migrate
 npm run dev
 ```
 
-Open `http://localhost:3000`. Local data is stored in `data/bowling.db` unless Turso env vars are set.
+Open `http://localhost:3000`. Local data is in `data/bowling.db` unless Turso env vars are set.
 
 ## Verify
 
 ```powershell
-npm run format:check
-npm run lint
 npm run typecheck
 npm test
 ```
