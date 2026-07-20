@@ -1,0 +1,309 @@
+import Database from "libsql";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  calculateHandicap,
+  DEFAULT_SETTINGS,
+  resolveUsedAverage,
+} from "./bowling";
+import { DEFAULT_MONDAY_ROSTER } from "./default-roster";
+import type { LeagueSettings, Player } from "./types";
+
+type SqliteDb = InstanceType<typeof Database>;
+
+let database: SqliteDb | null = null;
+
+const SCHEMA = `
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS players (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  display_name TEXT NOT NULL,
+  league_name TEXT,
+  average_mode TEXT NOT NULL DEFAULT 'MANUAL' CHECK(average_mode IN ('AUTO','MANUAL','FIXED')),
+  league_average INTEGER,
+  manual_average INTEGER,
+  fixed_average INTEGER,
+  pdf_handicap INTEGER,
+  games INTEGER,
+  pins INTEGER,
+  team_number INTEGER,
+  team_name TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  archived INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  last_import_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS aliases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  alias TEXT NOT NULL COLLATE NOCASE UNIQUE
+);
+CREATE TABLE IF NOT EXISTS average_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  league_average INTEGER,
+  manual_average INTEGER,
+  fixed_average INTEGER,
+  used_average INTEGER,
+  source TEXT NOT NULL,
+  import_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_filename TEXT NOT NULL,
+  source_blob BLOB,
+  league_name TEXT,
+  league_date TEXT,
+  week_number INTEGER,
+  status TEXT NOT NULL DEFAULT 'REVIEW',
+  parsed_json TEXT NOT NULL,
+  decisions_json TEXT,
+  errors_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  applied_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_date TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  team_count INTEGER NOT NULL,
+  target_team_size INTEGER NOT NULL,
+  seed TEXT NOT NULL,
+  handicap_settings_json TEXT NOT NULL,
+  attendees_json TEXT NOT NULL,
+  absent_ids_json TEXT NOT NULL,
+  generated_teams_json TEXT NOT NULL,
+  final_teams_json TEXT NOT NULL,
+  fairness_json TEXT NOT NULL,
+  scores_json TEXT,
+  results_json TEXT,
+  game_count INTEGER NOT NULL DEFAULT 3,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
+type LibsqlOpenOptions = {
+  authToken?: string;
+  syncUrl?: string;
+};
+
+function openDatabase(): SqliteDb {
+  const tursoUrl =
+    process.env.TURSO_DATABASE_URL?.trim() ||
+    process.env.LIBSQL_URL?.trim() ||
+    "";
+  const authToken =
+    process.env.TURSO_AUTH_TOKEN?.trim() ||
+    process.env.LIBSQL_AUTH_TOKEN?.trim() ||
+    undefined;
+
+  if (tursoUrl) {
+    // Embedded replica in /tmp keeps the sync better-sqlite3 API on serverless,
+    // while Turso remains the durable source of truth.
+    const replicaPath = path.join(os.tmpdir(), "monday-bowling-replica.db");
+    const options: LibsqlOpenOptions = {
+      syncUrl: tursoUrl,
+      authToken,
+    };
+    const db = new Database(replicaPath, options as never);
+    db.sync();
+    return db;
+  }
+
+  const filename =
+    process.env.BOWLING_DB_PATH ??
+    path.join(process.cwd(), "data", "bowling.db");
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  return new Database(filename);
+}
+
+export function getDb(): SqliteDb {
+  if (database) return database;
+  database = openDatabase();
+  try {
+    database.pragma("journal_mode = WAL");
+  } catch {
+    // Remote/replica connections may reject WAL.
+  }
+  database.exec(SCHEMA);
+  migrateSessionColumns(database);
+  const insert = database.prepare(
+    "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
+  );
+  for (const [key, value] of Object.entries(DEFAULT_SETTINGS))
+    insert.run(key, JSON.stringify(value));
+  ensureDefaultRoster(database);
+  return database;
+}
+
+function migrateSessionColumns(db: SqliteDb): void {
+  const columns = (
+    db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+  const add = (name: string, type: string) => {
+    if (!columns.includes(name))
+      db.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${type}`);
+  };
+  add("scores_json", "TEXT");
+  add("results_json", "TEXT");
+  add("game_count", "INTEGER NOT NULL DEFAULT 3");
+}
+
+export function ensureDefaultRoster(db = getDb()): void {
+  const insert = db.prepare(
+    `INSERT INTO players(display_name, league_name, average_mode, active)
+     SELECT ?, ?, 'AUTO', 1
+     WHERE NOT EXISTS (
+       SELECT 1 FROM players
+       WHERE display_name = ? COLLATE NOCASE
+          OR league_name = ? COLLATE NOCASE
+     )`,
+  );
+  const seed = db.transaction(() => {
+    for (const name of DEFAULT_MONDAY_ROSTER) insert.run(name, name, name, name);
+  });
+  seed();
+}
+
+export function closeDb(): void {
+  try {
+    persistDb();
+  } catch {
+    // ignore
+  }
+  database?.close();
+  database = null;
+}
+
+/** Push/pull embedded replica when using Turso. No-op for local file DB. */
+export function persistDb(): void {
+  if (!database) return;
+  if (!process.env.TURSO_DATABASE_URL && !process.env.LIBSQL_URL) return;
+  try {
+    const sync = (database as SqliteDb & { sync?: () => void }).sync;
+    if (typeof sync === "function") sync.call(database);
+  } catch {
+    // Local file DBs expose sync() but throw SyncNotSupported.
+  }
+}
+
+export function getSettings(db = getDb()): LeagueSettings {
+  const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
+    key: string;
+    value: string;
+  }>;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...Object.fromEntries(rows.map((row) => [row.key, JSON.parse(row.value)])),
+  };
+}
+
+type PlayerRow = {
+  id: number;
+  display_name: string;
+  league_name: string | null;
+  average_mode: Player["averageMode"];
+  league_average: number | null;
+  manual_average: number | null;
+  fixed_average: number | null;
+  pdf_handicap: number | null;
+  games: number | null;
+  pins: number | null;
+  team_number: number | null;
+  team_name: string | null;
+  active: number;
+  archived: number;
+  notes: string;
+  updated_at: string;
+};
+
+export function rowToPlayer(
+  row: PlayerRow,
+  settings = getSettings(),
+  db = getDb(),
+): Player {
+  const usedAverage = resolveUsedAverage({
+    averageMode: row.average_mode,
+    leagueAverage: row.league_average,
+    manualAverage: row.manual_average,
+    fixedAverage: row.fixed_average,
+  });
+  const aliases = (
+    db
+      .prepare("SELECT alias FROM aliases WHERE player_id = ? ORDER BY alias")
+      .all(row.id) as Array<{ alias: string }>
+  ).map((a) => a.alias);
+  const handicap =
+    usedAverage === null ? null : calculateHandicap(usedAverage, settings);
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    leagueName: row.league_name,
+    aliases,
+    averageMode: row.average_mode,
+    leagueAverage: row.league_average,
+    manualAverage: row.manual_average,
+    fixedAverage: row.fixed_average,
+    usedAverage,
+    handicap,
+    projectedHandicapScore:
+      usedAverage === null || handicap === null ? null : usedAverage + handicap,
+    pdfHandicap: row.pdf_handicap,
+    games: row.games,
+    pins: row.pins,
+    teamNumber: row.team_number,
+    teamName: row.team_name,
+    active: Boolean(row.active),
+    archived: Boolean(row.archived),
+    notes: row.notes,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function listPlayers(includeArchived = true, db = getDb()): Player[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM players ${includeArchived ? "" : "WHERE archived = 0"} ORDER BY display_name COLLATE NOCASE`,
+    )
+    .all() as PlayerRow[];
+  const settings = getSettings(db);
+  return rows.map((row) => rowToPlayer(row, settings, db));
+}
+
+export function addAverageHistory(
+  playerId: number,
+  source: string,
+  importId?: number,
+  db = getDb(),
+): void {
+  const row = db
+    .prepare("SELECT * FROM players WHERE id = ?")
+    .get(playerId) as PlayerRow;
+  const used = resolveUsedAverage({
+    averageMode: row.average_mode,
+    leagueAverage: row.league_average,
+    manualAverage: row.manual_average,
+    fixedAverage: row.fixed_average,
+  });
+  db.prepare(
+    `INSERT INTO average_history(player_id, league_average, manual_average, fixed_average, used_average, source, import_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    playerId,
+    row.league_average,
+    row.manual_average,
+    row.fixed_average,
+    used,
+    source,
+    importId ?? null,
+  );
+}

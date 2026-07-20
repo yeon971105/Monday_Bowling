@@ -1,0 +1,18 @@
+export const DEFAULT_MONDAY_ROSTER = [
+  "Daniel Hong",
+  "Kevin Bang",
+  "Miji Lee",
+  "Ihyun Jeoung",
+  "Kyeomeui Lee",
+  "Jewon Yeon",
+  "Jay Meadows",
+  "Sunghun Kwak",
+  "Insoo Choo",
+  "Keonhee Lee",
+  "Yesol Meadows",
+  "See Won Kim",
+  "Yoomi Kim",
+  "Soo Jin Lee",
+  "Jong Jin Kim",
+  "Seon Ah Kim",
+] as const;

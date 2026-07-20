@@ -1,0 +1,10 @@
+node_modules/
+.next/
+coverage/
+data/*.db*
+*.log
+*.tsbuildinfo
+.env
+.env*.local
+fixtures/*.pdf
+!fixtures/.gitkeep
