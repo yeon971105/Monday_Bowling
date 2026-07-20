@@ -1,6 +1,5 @@
 import Database from "libsql";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   calculateHandicap,
@@ -107,16 +106,9 @@ function openDatabase(): SqliteDb {
     undefined;
 
   if (tursoUrl) {
-    // Embedded replica in /tmp keeps the sync better-sqlite3 API on serverless,
-    // while Turso remains the durable source of truth.
-    const replicaPath = path.join(os.tmpdir(), "monday-bowling-replica.db");
-    const options: LibsqlOpenOptions = {
-      syncUrl: tursoUrl,
-      authToken,
-    };
-    const db = new Database(replicaPath, options as never);
-    db.sync();
-    return db;
+    // Direct remote connection (works on Vercel Node runtime).
+    const options: LibsqlOpenOptions = { authToken };
+    return new Database(tursoUrl, options as never);
   }
 
   const filename =
@@ -168,10 +160,7 @@ export function ensureDefaultRoster(db = getDb()): void {
           OR league_name = ? COLLATE NOCASE
      )`,
   );
-  const seed = db.transaction(() => {
-    for (const name of DEFAULT_MONDAY_ROSTER) insert.run(name, name, name, name);
-  });
-  seed();
+  for (const name of DEFAULT_MONDAY_ROSTER) insert.run(name, name, name, name);
 }
 
 export function closeDb(): void {

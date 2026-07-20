@@ -171,8 +171,7 @@ export function applyImportDecisions(
   let created = 0;
   let protectedUsedAverage = 0;
 
-  const apply = db.transaction(() => {
-    for (const decision of decisions) {
+  for (const decision of decisions) {
       const row = review.reviewRows.find(
         (candidate) => candidate.rowIndex === decision.rowIndex,
       );
@@ -246,11 +245,9 @@ export function applyImportDecisions(
         ).run(playerId, row.printedName);
       if (playerId && importChanged)
         addAverageHistory(playerId, "PDF_IMPORT", importId, db);
-    }
-    db.prepare(
-      "UPDATE imports SET status='APPLIED', decisions_json=?, applied_at=CURRENT_TIMESTAMP WHERE id=?",
-    ).run(JSON.stringify(decisions), importId);
-  });
-  apply();
+  }
+  db.prepare(
+    "UPDATE imports SET status='APPLIED', decisions_json=?, applied_at=CURRENT_TIMESTAMP WHERE id=?",
+  ).run(JSON.stringify(decisions), importId);
   return { updated, created, protectedUsedAverage };
 }

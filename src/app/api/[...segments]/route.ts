@@ -537,14 +537,11 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (s[0] === "settings") {
       const body = assertSettings(await request.json());
-      const save = db.transaction(() => {
-        const stmt = db.prepare(
-          "INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        );
-        for (const [key, value] of Object.entries(body))
-          stmt.run(key, JSON.stringify(value));
-      });
-      save();
+      const stmt = db.prepare(
+        "INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      );
+      for (const [key, value] of Object.entries(body))
+        stmt.run(key, JSON.stringify(value));
       return json(body);
     }
     if (s[0] === "sync" && s[1] === "league") {
@@ -703,31 +700,28 @@ export async function POST(request: NextRequest, context: Context) {
         "imports",
         "sessions",
       ];
-      const restore = db.transaction(() => {
-        for (const table of [...tables].reverse())
-          db.prepare(`DELETE FROM ${table}`).run();
-        for (const table of tables)
-          for (const row of backup.data[table] ?? []) {
-            const keys = Object.keys(row);
-            const placeholders = keys.map(() => "?").join(",");
-            const values = keys.map((key) => {
-              const value = row[key];
-              if (key.endsWith("_json") && value !== null && typeof value !== "string")
-                return JSON.stringify(value);
-              if (
-                key === "source_blob" &&
-                value?.type === "Buffer" &&
-                Array.isArray(value.data)
-              )
-                return Buffer.from(value.data);
-              return value;
-            });
-            db.prepare(
-              `INSERT INTO ${table}(${keys.join(",")}) VALUES (${placeholders})`,
-            ).run(...values);
-          }
-      });
-      restore();
+      for (const table of [...tables].reverse())
+        db.prepare(`DELETE FROM ${table}`).run();
+      for (const table of tables)
+        for (const row of backup.data[table] ?? []) {
+          const keys = Object.keys(row);
+          const placeholders = keys.map(() => "?").join(",");
+          const values = keys.map((key) => {
+            const value = row[key];
+            if (key.endsWith("_json") && value !== null && typeof value !== "string")
+              return JSON.stringify(value);
+            if (
+              key === "source_blob" &&
+              value?.type === "Buffer" &&
+              Array.isArray(value.data)
+            )
+              return Buffer.from(value.data);
+            return value;
+          });
+          db.prepare(
+            `INSERT INTO ${table}(${keys.join(",")}) VALUES (${placeholders})`,
+          ).run(...values);
+        }
       return json({ ok: true });
     }
     return fail("Not found", 404);
