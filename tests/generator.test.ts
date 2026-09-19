@@ -41,6 +41,7 @@ describe("team generator", () => {
       expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
     },
   );
+
   it("includes no unselected or archived player when caller supplies the eligible attendance set", () => {
     const roster = group(12).map((p, i) => ({ ...p, archived: i === 11 }));
     const selected = roster.filter((p) => !p.archived && Number(p.id) !== 10);
@@ -52,22 +53,45 @@ describe("team generator", () => {
     expect(ids(result)).not.toContain("10");
     expect(ids(result)).not.toContain("12");
   });
-  it("distributes top and lower tiers across teams when possible", () => {
+
+  it("spreads avg≥150 and avg<150 pools across teams", () => {
+    // Mix of highs (160+) and lows (120-140).
+    const players: GeneratorPlayer[] = [
+      ...[210, 200, 190, 180, 170, 160].map((average, i) => ({
+        id: `h${i}`,
+        name: `High ${i}`,
+        usedAverage: average,
+        averageMode: "AUTO" as const,
+        handicap: 0,
+        projectedScore: average,
+      })),
+      ...[140, 135, 130, 125, 120, 115].map((average, i) => ({
+        id: `l${i}`,
+        name: `Low ${i}`,
+        usedAverage: average,
+        averageMode: "AUTO" as const,
+        handicap: 0,
+        projectedScore: average,
+      })),
+    ];
     const result = generateTeams({
-      players: group(12),
-      teamCount: 4,
-      seed: "tiers",
+      players,
+      teamCount: 3,
+      seed: "pools",
     });
-    for (const tier of ["A", "D"] as const) {
+    for (const pool of ["high", "low"] as const) {
       const counts = result.teams.map(
-        (team) => team.players.filter((player) => player.tier === tier).length,
+        (team) =>
+          team.players.filter((player) =>
+            pool === "high"
+              ? player.usedAverage >= 150
+              : player.usedAverage < 150,
+          ).length,
       );
-      // Twelve attendees create three people per quartile, so four teams cannot
-      // each receive one; the required invariant is a spread of at most one.
       expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
-      expect(Math.max(...counts)).toBe(1);
     }
   });
+
   it("reproduces the same teams from the same seed", () => {
     const options = {
       players: group(15),
@@ -77,68 +101,31 @@ describe("team generator", () => {
     };
     expect(generateTeams(options).teams).toEqual(generateTeams(options).teams);
   });
-  it("different seeds produce different valid near-balanced reshuffles", () => {
-    const a = generateTeams({ players: group(15), teamCount: 5, seed: "one" });
-    const b = generateTeams({ players: group(15), teamCount: 5, seed: "two" });
-    expect(a.teams.map((t) => t.players.map((p) => p.id))).not.toEqual(
-      b.teams.map((t) => t.players.map((p) => p.id)),
-    );
-    expect(a.fairness.scratchSpread).toBeLessThan(12);
-    expect(b.fairness.scratchSpread).toBeLessThan(12);
-  });
-  it("materially outperforms naive random assignment on average", () => {
-    const players = group(15);
-    let balanced = 0,
-      random = 0;
-    for (let i = 0; i < 12; i++) {
-      balanced += generateTeams({
-        players,
-        teamCount: 5,
-        mode: "BALANCED",
-        seed: `b-${i}`,
-      }).fairness.score;
-      random += generateTeams({
-        players,
-        teamCount: 5,
-        mode: "RANDOM",
-        seed: `r-${i}`,
-      }).fairness.score;
-    }
-    expect(balanced / 12).toBeLessThan((random / 12) * 0.65);
-  });
-  it("repeat avoidance reduces recent pairings without breaking tier fairness", () => {
+
+  it("different seeds reshuffle partner combinations", () => {
     const players = group(12);
-    const baseline = generateTeams({
-      players,
-      teamCount: 4,
-      mode: "BALANCED",
-      seed: "pairs",
-    });
-    const repeatPairs: Record<string, number> = {};
-    for (const team of baseline.teams)
-      for (let i = 0; i < team.players.length; i++)
-        for (let j = i + 1; j < team.players.length; j++) {
-          const a = team.players[i].id,
-            b = team.players[j].id;
-          repeatPairs[a < b ? `${a}|${b}` : `${b}|${a}`] = 4;
-        }
-    const avoided = generateTeams({
-      players,
-      teamCount: 4,
-      mode: "BALANCED_REPEATS",
-      seed: "pairs",
-      repeatPairs,
-    });
-    expect(avoided.fairness.repeatedPairs).toBeLessThan(
-      baseline.teams.length * 3 * 4,
-    );
-    for (const tier of ["A", "D"] as const) {
-      const counts = avoided.teams.map(
-        (t) => t.players.filter((p) => p.tier === tier).length,
+    const combos = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const result = generateTeams({
+        players,
+        teamCount: 2,
+        seed: `reshuffle-${i}`,
+      });
+      combos.add(
+        result.teams
+          .map((team) =>
+            team.players
+              .map((player) => player.id)
+              .sort()
+              .join(","),
+          )
+          .sort()
+          .join("|"),
       );
-      expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
     }
+    expect(combos.size).toBeGreaterThan(3);
   });
+
   it("manual player movement recalculates fairness and totals", () => {
     const result = generateTeams({
       players: group(10),

@@ -215,6 +215,10 @@ export function applyImportDecisions(
           league_name: string | null;
           average_mode: string;
         };
+        if (before.average_mode === "FIXED") {
+          protectedUsedAverage += 1;
+          continue;
+        }
         importChanged =
           before.league_average !== row.currentAverage ||
           before.pdf_handicap !== row.pdfHandicap ||

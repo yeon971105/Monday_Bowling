@@ -128,6 +128,7 @@ export function getDb(): SqliteDb {
   }
   database.exec(SCHEMA);
   migrateSessionColumns(database);
+  migrateScratchMoney(database);
   const insert = database.prepare(
     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
   );
@@ -148,6 +149,73 @@ function migrateSessionColumns(db: SqliteDb): void {
   add("scores_json", "TEXT");
   add("results_json", "TEXT");
   add("game_count", "INTEGER NOT NULL DEFAULT 3");
+  add("game_rosters_json", "TEXT");
+  add("game_results_json", "TEXT");
+  add("lottery_ids_json", "TEXT");
+  add("scratch_winners_json", "TEXT");
+}
+
+function migrateScratchMoney(db: SqliteDb): void {
+  const playerColumns = (
+    db.prepare("PRAGMA table_info(players)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+  if (!playerColumns.includes("scratch_pool"))
+    db.exec("ALTER TABLE players ADD COLUMN scratch_pool INTEGER NOT NULL DEFAULT 0");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scratch_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_date TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout')),
+      player_id INTEGER,
+      player_name TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      session_id INTEGER,
+      month_key TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_dues
+      ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
+      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
+  `);
+  migrateScratchLedgerPayouts(db);
+}
+
+function migrateScratchLedgerPayouts(db: SqliteDb): void {
+  const row = db
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scratch_ledger'`,
+    )
+    .get() as { sql: string } | undefined;
+  if (!row?.sql || row.sql.includes("'payout'")) return;
+  db.exec(`
+    CREATE TABLE scratch_ledger_payout (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_date TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout')),
+      player_id INTEGER,
+      player_name TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      session_id INTEGER,
+      month_key TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO scratch_ledger_payout(
+      id, entry_date, kind, player_id, player_name, amount,
+      session_id, month_key, note, created_at
+    )
+    SELECT id, entry_date, kind, player_id, player_name, amount,
+           session_id, month_key, note, created_at
+    FROM scratch_ledger;
+    DROP TABLE scratch_ledger;
+    ALTER TABLE scratch_ledger_payout RENAME TO scratch_ledger;
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_dues
+      ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
+      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
+  `);
 }
 
 export function ensureDefaultRoster(db = getDb()): void {
@@ -212,6 +280,7 @@ type PlayerRow = {
   active: number;
   archived: number;
   notes: string;
+  scratch_pool?: number;
   updated_at: string;
 };
 
@@ -254,6 +323,7 @@ export function rowToPlayer(
     active: Boolean(row.active),
     archived: Boolean(row.archived),
     notes: row.notes,
+    scratchPool: Boolean(row.scratch_pool),
     updatedAt: row.updated_at,
   };
 }

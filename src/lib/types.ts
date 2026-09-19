@@ -30,6 +30,7 @@ export interface Player {
   active: boolean;
   archived: boolean;
   notes: string;
+  scratchPool: boolean;
   updatedAt: string;
 }
 
@@ -102,6 +103,8 @@ export interface PlayerStat {
   mondayAverage: number | null;
   gamesPlayed: number;
   totalPins: number;
+  scratchTickets: number;
+  scratchPool: boolean;
   usedAverage: number | null;
 }
 
@@ -126,3 +129,36 @@ export interface ParsedLeaguePdf {
   players: ParsedPdfPlayer[];
   errors: string[];
 }
+
+export type ScratchLedgerKind = "dues" | "ticket" | "payout";
+
+export type ScratchLedgerEntry = {
+  id: number;
+  date: string;
+  kind: ScratchLedgerKind;
+  playerId: number | null;
+  playerName: string;
+  amount: number;
+  sessionId: number | null;
+  monthKey: string | null;
+  note: string;
+  balanceAfter: number;
+};
+
+export type ScratchPoolMember = {
+  id: number;
+  name: string;
+};
+
+export type ScratchMoneySnapshot = {
+  balance: number;
+  duesAmount: number;
+  ticketAmount: number;
+  duesDay: number;
+  today: string;
+  nextDuesDate: string;
+  nextDuesCount: number;
+  nextDuesTotal: number;
+  members: ScratchPoolMember[];
+  entries: ScratchLedgerEntry[];
+};

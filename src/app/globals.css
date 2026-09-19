@@ -233,6 +233,23 @@ th {
   padding: 10px;
   border-bottom: 1px solid var(--line);
 }
+button.sort-th {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+button.sort-th:hover,
+button.sort-th.active {
+  color: var(--ink);
+}
 td {
   padding: 12px 10px;
   border-bottom: 1px solid #edf0ed;
@@ -361,6 +378,23 @@ tr:last-child td {
 .roster-count strong {
   font-size: 18px;
 }
+.sort-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.sort-field select {
+  width: auto;
+  min-width: 150px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
 .roster-row {
   display: grid;
   grid-template-columns: 28px 1fr auto;
@@ -383,6 +417,57 @@ tr:last-child td {
 .roster-edit {
   grid-template-columns: 28px 1fr auto;
 }
+.roster-name-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  vertical-align: middle;
+}
+.muted .scratch-mark {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.scratch-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.badge.scratch-badge {
+  background: #fde8e6;
+  color: #b42318;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.button.small.scratch-toggle {
+  min-width: 42px;
+  background: transparent;
+  color: #b42318;
+  border: 1px solid #f2b8b5;
+}
+.button.small.scratch-toggle.on {
+  background: #c0392b;
+  color: #fff;
+  border-color: #c0392b;
+}
+.roster-select-all {
+  background: #f3f6f3;
+  border-style: dashed;
+}
+.roster-select-all .roster-name strong {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--muted);
+}
 .avg-edit {
   display: flex;
   gap: 8px;
@@ -392,12 +477,45 @@ tr:last-child td {
   width: 88px;
   min-height: 38px;
 }
+.button.small.lock-btn {
+  background: #176b4b;
+  color: white;
+}
+.button.small.unlock-btn {
+  background: #c47a2c;
+  color: white;
+}
+.button.small.ghost-toggle.lock-btn {
+  background: transparent;
+  color: #176b4b;
+  border: 1px solid #9fbfb0;
+}
+.button.small.ghost-toggle.unlock-btn {
+  background: transparent;
+  color: #c47a2c;
+  border: 1px solid #e0b58a;
+}
+.roster-mark-remove {
+  border-color: #f0b4b0;
+  background: #fff6f5;
+}
+.avg-edit input:disabled {
+  background: #eef2ef;
+  color: var(--muted);
+  cursor: not-allowed;
+}
 .team-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+.team-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .team-head h3 {
   margin: 0;
@@ -407,6 +525,53 @@ tr:last-child td {
 .team-head h3 small {
   font-size: 14px;
   font-weight: 550;
+}
+.player-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.player-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.avg-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 550;
+}
+.avg-inline input {
+  width: 64px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font: inherit;
+}
+.icon-button.row-remove {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  margin-top: 2px;
+  font-size: 18px;
+  line-height: 1;
+}
+.add-team-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(50vh, 360px);
+  overflow: auto;
+}
+.add-team-item {
+  display: flex !important;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
 }
 .team-card.team-win {
   background: #f3faf6;
@@ -511,6 +676,49 @@ tr:last-child td {
   text-align: center;
   margin-bottom: 16px;
 }
+.race-card {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+}
+.race-card.final {
+  background: #f3faf6;
+  border-color: #9fd0b4;
+}
+.race-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.race-head strong {
+  font-size: 18px;
+}
+.race-rows {
+  display: grid;
+  gap: 6px;
+}
+.race-row {
+  display: grid;
+  grid-template-columns: 2.2em 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+.race-row.lead {
+  font-weight: 700;
+}
+.race-place {
+  color: var(--muted);
+}
+.race-gap {
+  min-width: 4.5em;
+  text-align: right;
+  color: var(--muted);
+}
+.race-row.lead .race-gap {
+  color: var(--green);
+}
 .team-score-block {
   margin-top: 14px;
   padding-top: 14px;
@@ -536,6 +744,35 @@ tr:last-child td {
   font-size: 22px;
   color: var(--green-dark);
 }
+.money-hero {
+  display: grid;
+  gap: 10px;
+}
+.money-balance {
+  display: block;
+  font-size: 42px;
+  line-height: 1.1;
+  margin-top: 4px;
+  color: var(--green-dark);
+}
+.money-balance.negative {
+  color: var(--red);
+}
+.club-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 12px;
+}
+.club-names .roster-name-line strong {
+  font-size: 15px;
+}
+.club-group-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+}
 .player-stats-list {
   display: grid;
   gap: 12px;
@@ -550,26 +787,48 @@ tr:last-child td {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: baseline;
+  align-items: center;
   margin-bottom: 8px;
 }
 .player-stat-top strong {
   font-size: 18px;
 }
+.player-pay {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
 .due-amount {
   font-size: 22px !important;
   color: var(--green-dark);
 }
-.player-stat-scores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  font-size: 15px;
+.paid-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 650;
   color: var(--muted);
+  cursor: pointer;
+  user-select: none;
 }
-.player-stat-scores strong {
-  color: var(--ink);
-  font-size: 16px;
+.paid-check input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--green);
+}
+.player-stat-row.paid {
+  background: #eef7f1;
+  border-color: #9fd0b4;
+}
+.player-stat-row.paid .due-amount {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.player-stat-row.paid .paid-check {
+  color: var(--green-dark);
 }
 .player-score-grid {
   display: grid;
@@ -601,10 +860,12 @@ tr:last-child td {
 .player-score-cell.series strong {
   color: var(--green-dark);
 }
-.player-vs-avg {
-  margin-top: 8px;
-  font-size: 14px;
-  font-weight: 650;
+.player-score-cell.avg {
+  background: #eef2f8;
+  border-color: #a8bdd4;
+}
+.player-score-cell.avg strong {
+  color: #1f4b7a;
 }
 .diff-up {
   color: var(--green-dark);
@@ -632,8 +893,17 @@ tr:last-child td {
   margin-left: auto;
   justify-content: flex-end;
 }
+.scoreboard.single-game .scoreboard-head.single,
 .scoreboard.single-game .scoreboard-row.single {
   grid-template-columns: 1.5fr 100px 72px;
+}
+.scoreboard.single-game .scoreboard-head.single {
+  padding: 0 0 2px;
+  font-weight: 650;
+}
+.scoreboard.single-game .scoreboard-head.single span:nth-child(2),
+.scoreboard.single-game .scoreboard-head.single span:nth-child(3) {
+  text-align: center;
 }
 .scoreboard.single-game .scoreboard-row.single input {
   font-size: 20px;

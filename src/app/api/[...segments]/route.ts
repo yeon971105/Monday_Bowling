@@ -36,6 +36,14 @@ import {
   parseSessionScores,
   refreshManualAveragesFromHistory,
 } from "@/lib/stats";
+import {
+  deleteScratchPayout,
+  getScratchMoney,
+  recordScratchPayouts,
+  recordScratchTickets,
+  removeScratchTicketsForSession,
+  setScratchPoolMember,
+} from "@/lib/money";
 import type { AverageMode, ParsedLeaguePdf } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -99,6 +107,7 @@ function summarizeSync(
     weekNumber: number | null;
     leagueDate: string | null;
   },
+  history: { updated: number; unlocked: number } = { updated: 0, unlocked: 0 },
 ) {
   const matched = review.reviewRows
     .filter((row) => row.category === "EXACT" || row.category === "ALIAS")
@@ -115,6 +124,8 @@ function summarizeSync(
     ok: true as const,
     ...meta,
     ...applied,
+    historyAveragesUpdated: history.updated,
+    historyUnlocked: history.unlocked,
     matched,
     notFound: review.existingNotFound,
     leagueAvailable: review.reviewRows
@@ -166,14 +177,23 @@ async function syncLeagueFromReport() {
       review,
     );
     const after = buildReview(parsed);
-    return summarizeSync(after, applied, {
-      skipped: applied.updated === 0 && applied.created === 0,
-      reason: applied.updated === 0 ? "already_applied" : null,
-      importId: existing.id,
-      filename: sheet.filename,
-      weekNumber: existing.weekNumber ?? sheet.weekNumber,
-      leagueDate: stored.leagueDate ?? sheet.dateLabel,
-    });
+    const history = refreshManualAveragesFromHistory(db);
+    return summarizeSync(
+      after,
+      applied,
+      {
+        skipped: applied.updated === 0 && applied.created === 0 && history.updated === 0,
+        reason:
+          applied.updated === 0 && history.updated === 0
+            ? "already_applied"
+            : null,
+        importId: existing.id,
+        filename: sheet.filename,
+        weekNumber: existing.weekNumber ?? sheet.weekNumber,
+        leagueDate: stored.leagueDate ?? sheet.dateLabel,
+      },
+      history,
+    );
   }
 
   const buffer = await downloadLeagueSheet(sheet);
@@ -208,14 +228,20 @@ async function syncLeagueFromReport() {
   const autoDecisions = defaultDecisionsForReview(review);
   const applied = applyImportDecisions(importId, autoDecisions, review);
   const after = buildReview(parsed);
-  return summarizeSync(after, applied, {
-    skipped: false,
-    reason: null,
-    importId,
-    filename: sheet.filename,
-    weekNumber: parsed.weekNumber ?? sheet.weekNumber,
-    leagueDate: parsed.leagueDate ?? sheet.dateLabel,
-  });
+  const history = refreshManualAveragesFromHistory(db);
+  return summarizeSync(
+    after,
+    applied,
+    {
+      skipped: false,
+      reason: null,
+      importId,
+      filename: sheet.filename,
+      weekNumber: parsed.weekNumber ?? sheet.weekNumber,
+      leagueDate: parsed.leagueDate ?? sheet.dateLabel,
+    },
+    history,
+  );
 }
 
 function dashboard() {
@@ -369,6 +395,8 @@ export async function GET(_request: NextRequest, context: Context) {
               `SELECT id, session_date sessionDate, mode, team_count teamCount,
                 seed, fairness_json fairness, final_teams_json finalTeams,
                 attendees_json attendees, scores_json scores, results_json results,
+                game_rosters_json gameRosters, game_results_json gameResults,
+                lottery_ids_json lotteryIds, scratch_winners_json scratchWinners,
                 game_count gameCount, created_at createdAt
                FROM sessions ORDER BY session_date DESC, id DESC`,
             )
@@ -384,6 +412,12 @@ export async function GET(_request: NextRequest, context: Context) {
               attendees: JSON.parse(r.attendees),
               scores: parseSessionScores(r.scores),
               results: parseSessionResults(r.results),
+              gameRosters: r.gameRosters ? JSON.parse(r.gameRosters) : null,
+              gameResults: r.gameResults ? JSON.parse(r.gameResults) : null,
+              lotteryIds: r.lotteryIds ? JSON.parse(r.lotteryIds) : [],
+              scratchWinners: r.scratchWinners
+                ? JSON.parse(r.scratchWinners)
+                : [],
               gameCount: r.gameCount ?? GAMES_PER_SESSION,
               createdAt: r.createdAt,
             })),
@@ -403,6 +437,7 @@ export async function GET(_request: NextRequest, context: Context) {
         ),
       );
     }
+    if (s[0] === "money") return json(getScratchMoney());
     if (s[0] === "backup") {
       const tables = [
         "settings",
@@ -411,6 +446,7 @@ export async function GET(_request: NextRequest, context: Context) {
         "average_history",
         "imports",
         "sessions",
+        "scratch_ledger",
       ];
       const data = Object.fromEntries(
         tables.map((table) => [
@@ -612,8 +648,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (s[0] === "generate") {
       const body = await request.json();
       const teamCount = Number(body.teamCount);
-      if (teamCount !== 2 && teamCount !== 3)
-        throw new Error("Choose 2 or 3 teams");
+      if (teamCount < 2 || teamCount > 6)
+        throw new Error("Choose 2 to 6 teams");
       const settings = getSettings();
       const recent = db
         .prepare(
@@ -655,8 +691,9 @@ export async function POST(request: NextRequest, context: Context) {
             session_date,mode,team_count,target_team_size,seed,
             handicap_settings_json,attendees_json,absent_ids_json,
             generated_teams_json,final_teams_json,fairness_json,
-            scores_json,results_json,game_count
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            scores_json,results_json,game_rosters_json,game_results_json,
+            lottery_ids_json,scratch_winners_json,game_count
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           body.sessionDate,
@@ -672,15 +709,43 @@ export async function POST(request: NextRequest, context: Context) {
           JSON.stringify(body.fairness ?? {}),
           JSON.stringify(body.scores ?? {}),
           JSON.stringify(body.results ?? []),
+          JSON.stringify(body.gameRosters ?? null),
+          JSON.stringify(body.gameResults ?? null),
+          JSON.stringify(body.lotteryIds ?? []),
+          JSON.stringify(body.scratchWinners ?? []),
           gameCount,
         );
+      recordScratchTickets({
+        sessionId: Number(result.lastInsertRowid),
+        sessionDate: body.sessionDate,
+        winners: body.scratchWinners ?? [],
+      });
       const manualUpdated = refreshManualAveragesFromHistory(db);
       return json(
         {
           id: Number(result.lastInsertRowid),
-          manualAveragesUpdated: manualUpdated,
+          manualAveragesUpdated: manualUpdated.updated,
+          historyUnlocked: manualUpdated.unlocked,
         },
         201,
+      );
+    }
+    if (s[0] === "money" && s[1] === "members") {
+      const body = await request.json();
+      const playerId = Number(body.playerId);
+      if (!Number.isFinite(playerId)) throw new Error("Player is required");
+      setScratchPoolMember(playerId, Boolean(body.inPool));
+      return json(getScratchMoney());
+    }
+    if (s[0] === "money" && s[1] === "payouts") {
+      const body = await request.json();
+      return json(
+        recordScratchPayouts({
+          date: String(body.date ?? ""),
+          amount: Number(body.amount),
+          playerIds: Array.isArray(body.playerIds) ? body.playerIds : [],
+          note: typeof body.note === "string" ? body.note : "",
+        }),
       );
     }
     if (s[0] === "backup" && s[1] === "restore") {
@@ -699,6 +764,7 @@ export async function POST(request: NextRequest, context: Context) {
         "average_history",
         "imports",
         "sessions",
+        "scratch_ledger",
       ];
       for (const table of [...tables].reverse())
         db.prepare(`DELETE FROM ${table}`).run();
@@ -799,7 +865,11 @@ export async function PUT(request: NextRequest, context: Context) {
     const manual = validateAverage(
       body.manualAverage ?? existing.manual_average,
     );
-    let fixed = validateAverage(body.fixedAverage ?? existing.fixed_average);
+    let fixed = validateAverage(
+      Object.prototype.hasOwnProperty.call(body, "fixedAverage")
+        ? body.fixedAverage
+        : existing.fixed_average,
+    );
     if (mode === "FIXED" && fixed === null)
       fixed = validateAverage(
         body.usedAverage ??
@@ -808,6 +878,7 @@ export async function PUT(request: NextRequest, context: Context) {
             : existing.manual_average),
         false,
       );
+    if (mode !== "FIXED") fixed = null;
     if (mode === "AUTO" && league === null)
       throw new Error(
         "AUTO players need a league average (Sync first, or enter one)",
@@ -850,12 +921,16 @@ export async function DELETE(request: NextRequest, context: Context) {
   try {
     const s = (await context.params).segments;
     const db = getDb();
+    if (s[0] === "money" && s[1] === "entries" && s[2]) {
+      return json(deleteScratchPayout(Number(s[2])));
+    }
     if (s[0] === "sessions" && s[1]) {
       const id = Number(s[1]);
       const existing = db
         .prepare("SELECT id FROM sessions WHERE id=?")
         .get(id) as { id: number } | undefined;
       if (!existing) return fail("Session not found", 404);
+      removeScratchTicketsForSession(id);
       db.prepare("DELETE FROM sessions WHERE id=?").run(id);
       refreshManualAveragesFromHistory(db);
       return json({ ok: true });

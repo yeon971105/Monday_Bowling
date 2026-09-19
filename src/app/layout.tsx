@@ -2,14 +2,14 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Monday Bowling",
-  description: "Monday bowling teams, scores, and history",
-  applicationName: "Monday Bowling",
+  title: "San Jose Korean Bowling",
+  description: "San Jose Korean bowling teams, scores, and history",
+  applicationName: "San Jose Korean Bowling",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Bowling",
+    title: "SJ Bowling",
   },
   icons: {
     icon: [

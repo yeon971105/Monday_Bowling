@@ -1,6 +1,28 @@
 export const GAMES_PER_SESSION = 3;
+export const LAST_GAME_INDEX = GAMES_PER_SESSION - 1;
+
+export function clampGameIndex(index: number): number {
+  if (!Number.isFinite(index)) return 0;
+  return Math.max(0, Math.min(LAST_GAME_INDEX, Math.trunc(index)));
+}
+
+/** Next game index, or null if already on the last game. Does not chain on double-tap. */
+export function nextGameIndex(current: number): number | null {
+  const index = clampGameIndex(current);
+  if (index >= LAST_GAME_INDEX) return null;
+  return index + 1;
+}
+
 export const LANE_FEE_PER_GAME = 5;
 export const HANDICAP_PERCENT = 0.9;
+export const MAX_TEAMS = 6;
+export const MIN_TEAMS = 2;
+/** Lane fees go to Jewon — he does not pay himself. */
+export const FEE_COLLECTOR_PATTERN = /jewon/i;
+
+export function isFeeCollector(name: string): boolean {
+  return FEE_COLLECTOR_PATTERN.test(name);
+}
 
 export type PlayerScores = [number | null, number | null, number | null];
 export type ScoreMap = Record<string, PlayerScores>;
@@ -31,6 +53,49 @@ export interface GameResult {
   margin: number | null;
 }
 
+export interface LiveStanding {
+  teamName: string;
+  total: number;
+  place: number;
+  leading: boolean;
+  tied: boolean;
+  /** Pins ahead of 2nd when this team is the sole leader. */
+  leadBy: number;
+  /** Pins behind the current leader. */
+  behindBy: number;
+  /** Pins needed to become the sole leader (0 if already leading alone). */
+  toLead: number;
+}
+
+/** Live race from current handicap totals — works before the game is complete. */
+export function computeLiveStandings(
+  teams: Array<{ teamName: string; total: number }>,
+): LiveStanding[] {
+  if (!teams.length) return [];
+  const ranked = [...teams].sort(
+    (a, b) => b.total - a.total || a.teamName.localeCompare(b.teamName),
+  );
+  const best = ranked[0]?.total ?? 0;
+  const second = ranked[1]?.total ?? best;
+  const leadCount = ranked.filter((team) => team.total === best).length;
+  const placeByName = new Map<string, number>();
+  ranked.forEach((team, index) => placeByName.set(team.teamName, index + 1));
+  return teams.map((team) => {
+    const leading = leadCount === 1 && team.total === best;
+    const tied = leadCount > 1 && team.total === best;
+    return {
+      teamName: team.teamName,
+      total: team.total,
+      place: placeByName.get(team.teamName) ?? 0,
+      leading,
+      tied,
+      leadBy: leading ? team.total - second : 0,
+      behindBy: team.total === best ? 0 : best - team.total,
+      toLead: leading ? 0 : best - team.total + 1,
+    };
+  });
+}
+
 export interface TeamSeriesResult {
   teamName: string;
   averageSum: number;
@@ -52,6 +117,8 @@ export interface MoneyLine {
   laneFee: number;
   betPaid: number;
   betReceived: number;
+  wins: number;
+  losses: number;
   /** Positive = owes money overall; negative = receives. */
   netDue: number;
 }
@@ -94,9 +161,11 @@ export function isGameComplete(
   scores: ScoreMap,
   gameIndex: number,
 ): boolean {
+  if (teams.length < 2) return false;
+  if (teams.some((team) => team.playerIds.length === 0)) return false;
   return teams.every((team) =>
     team.playerIds.every((playerId) => {
-      const value = scores[playerId]?.[gameIndex];
+      const value = scores[String(playerId)]?.[gameIndex];
       return typeof value === "number" && Number.isFinite(value);
     }),
   );
@@ -109,20 +178,18 @@ export function computeGameResult(input: {
 }): GameResult {
   const handicaps = teamHandicapPerGame(input.teams);
   const complete = isGameComplete(input.teams, input.scores, input.gameIndex);
+  // Scratch/total update live as scores are typed; win/loss only when complete.
   const lines: TeamGameLine[] = input.teams.map((team, index) => {
-    const scratch = complete
-      ? team.playerIds.reduce(
-          (sum, playerId) =>
-            sum + (input.scores[playerId]?.[input.gameIndex] ?? 0),
-          0,
-        )
-      : 0;
+    const scratch = team.playerIds.reduce((sum, playerId) => {
+      const value = input.scores[String(playerId)]?.[input.gameIndex];
+      return sum + (typeof value === "number" ? value : 0);
+    }, 0);
     const handicap = handicaps[index];
     return {
       teamName: team.name,
       scratch,
       handicap,
-      total: complete ? scratch + handicap : 0,
+      total: scratch + handicap,
       place: null,
       won: false,
     };
@@ -253,77 +320,239 @@ export function toSessionTeamResults(
   }));
 }
 
+export type MoneyTeam = {
+  name: string;
+  averageSum: number;
+  players: Array<{ id: string; name: string }>;
+};
+
+export type StoredGameTeamLine = {
+  teamName: string;
+  playerIds: string[];
+  scratch: number;
+  handicap: number;
+  total: number;
+  place: number | null;
+  won: boolean;
+};
+
+/** Per-game snapshot so mid-night team changes keep correct W-L / money. */
+export type StoredGameResult = {
+  gameIndex: number;
+  teams: StoredGameTeamLine[];
+  winnerName: string | null;
+  lastName: string | null;
+  margin: number | null;
+};
+
+export function toStoredGameResult(
+  game: GameResult,
+  teams: MoneyTeam[],
+): StoredGameResult {
+  return {
+    gameIndex: game.gameIndex,
+    winnerName: game.winnerName,
+    lastName: game.lastName,
+    margin: game.margin,
+    teams: game.teams.map((line) => {
+      const source = teams.find((team) => team.name === line.teamName);
+      return {
+        teamName: line.teamName,
+        playerIds: (source?.players ?? []).map((player) => String(player.id)),
+        scratch: line.scratch,
+        handicap: line.handicap,
+        total: line.total,
+        place: line.place,
+        won: line.won,
+      };
+    }),
+  };
+}
+
+export function buildStoredGameResults(input: {
+  teamsByGame: Array<MoneyTeam[] | null | undefined>;
+  scores: ScoreMap;
+  gameCount: number;
+}): StoredGameResult[] {
+  const results: StoredGameResult[] = [];
+  for (let gameIndex = 0; gameIndex < input.gameCount; gameIndex += 1) {
+    const teams =
+      input.teamsByGame[gameIndex] ??
+      input.teamsByGame.find((entry) => entry && entry.length) ??
+      null;
+    if (!teams?.length) continue;
+    const scoringTeams: TeamForScoring[] = teams.map((team) => ({
+      name: team.name,
+      playerIds: team.players.map((player) => String(player.id)),
+      averageSum: team.averageSum,
+    }));
+    const game = computeGameResult({
+      teams: scoringTeams,
+      scores: input.scores,
+      gameIndex,
+    });
+    if (!game.complete) continue;
+    results.push(toStoredGameResult(game, teams));
+  }
+  return results;
+}
+
+export const SCRATCH_WINS_NEEDED = 2;
+
+export type ScratchWinner = {
+  playerId: string;
+  name: string;
+  wins: number;
+};
+
+export function gameWinCounts(games: StoredGameResult[]): Map<string, number> {
+  const wins = new Map<string, number>();
+  for (const game of games) {
+    const winner =
+      game.teams.find((team) => team.won) ??
+      (game.winnerName
+        ? game.teams.find((team) => team.teamName === game.winnerName)
+        : undefined);
+    if (!winner) continue;
+    for (const id of winner.playerIds) {
+      const key = String(id);
+      wins.set(key, (wins.get(key) ?? 0) + 1);
+    }
+  }
+  return wins;
+}
+
+/** 2+ team-game wins among lottery entrants (best of 3, or a late join with 2 wins). */
+export function computeScratchWinners(input: {
+  games: StoredGameResult[];
+  players: Array<{ id: string | number; name: string }>;
+  lotteryIds: Iterable<string | number>;
+}): ScratchWinner[] {
+  const allowed = new Set([...input.lotteryIds].map((id) => String(id)));
+  if (!allowed.size) return [];
+  const wins = gameWinCounts(input.games);
+  const nameById = new Map(
+    input.players.map((player) => [String(player.id), player.name]),
+  );
+  return [...allowed]
+    .filter((id) => (wins.get(id) ?? 0) >= SCRATCH_WINS_NEEDED)
+    .map((id) => ({
+      playerId: id,
+      name: nameById.get(id) ?? id,
+      wins: wins.get(id) ?? 0,
+    }))
+    .sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+}
+
+export function moneyTeamsSignature(teams: MoneyTeam[]): string {
+  return teams
+    .map(
+      (team) =>
+        `${team.name}:${team.players
+          .map((player) => String(player.id))
+          .sort()
+          .join(",")}`,
+    )
+    .sort()
+    .join("|");
+}
+
+/** True when membership changed between games (Reset for next game). */
+export function teamsChangedDuringNight(
+  teamsByGame: Array<MoneyTeam[] | null | undefined>,
+  gameCount: number,
+): boolean {
+  const signatures: string[] = [];
+  for (let gameIndex = 0; gameIndex < gameCount; gameIndex += 1) {
+    const teams = teamsByGame[gameIndex];
+    if (teams?.length) signatures.push(moneyTeamsSignature(teams));
+  }
+  if (signatures.length <= 1) return false;
+  return signatures.some((signature) => signature !== signatures[0]);
+}
+
 export function computeMoneySettlement(input: {
-  teams: Array<{
-    name: string;
-    averageSum: number;
-    players: Array<{ id: string; name: string }>;
-  }>;
+  teams?: MoneyTeam[];
+  teamsByGame?: Array<MoneyTeam[] | null | undefined>;
   scores: ScoreMap;
   gameCount?: number;
 }): MoneyLine[] {
   const gameCount = input.gameCount ?? GAMES_PER_SESSION;
-  const scoringTeams: TeamForScoring[] = input.teams.map((team) => ({
-    name: team.name,
-    playerIds: team.players.map((player) => player.id),
-    averageSum: team.averageSum,
-  }));
-  const games = Array.from({ length: gameCount }, (_, gameIndex) =>
-    computeGameResult({
+  const fallback = input.teams ?? [];
+  const teamsByGame: MoneyTeam[][] = Array.from(
+    { length: gameCount },
+    (_, gameIndex) => {
+      const specific = input.teamsByGame?.[gameIndex];
+      if (specific?.length) return specific;
+      return fallback;
+    },
+  );
+
+  const byId = new Map<string, MoneyLine>();
+  const ensure = (player: { id: string; name: string }, teamName: string) => {
+    const id = String(player.id);
+    let line = byId.get(id);
+    if (!line) {
+      line = {
+        playerId: id,
+        name: player.name,
+        teamName,
+        seriesTotal: playerSeriesTotal(input.scores[id]),
+        laneFee: 0,
+        betPaid: 0,
+        betReceived: 0,
+        wins: 0,
+        losses: 0,
+        netDue: 0,
+      };
+      byId.set(id, line);
+    } else {
+      line.teamName = teamName;
+    }
+    return line;
+  };
+
+  for (const teams of teamsByGame) {
+    for (const team of teams)
+      for (const player of team.players) ensure(player, team.name);
+  }
+
+  for (let gameIndex = 0; gameIndex < gameCount; gameIndex += 1) {
+    const teams = teamsByGame[gameIndex];
+    if (!teams.length) continue;
+    const scoringTeams: TeamForScoring[] = teams.map((team) => ({
+      name: team.name,
+      playerIds: team.players.map((player) => String(player.id)),
+      averageSum: team.averageSum,
+    }));
+    const game = computeGameResult({
       teams: scoringTeams,
       scores: input.scores,
       gameIndex,
-    }),
-  );
-
-  const lines: MoneyLine[] = input.teams.flatMap((team) =>
-    team.players.map((player) => ({
-      playerId: player.id,
-      name: player.name,
-      teamName: team.name,
-      seriesTotal: playerSeriesTotal(input.scores[player.id]),
-      laneFee: 0,
-      betPaid: 0,
-      betReceived: 0,
-      netDue: 0,
-    })),
-  );
-
-  for (const game of games) {
+    });
     if (!game.complete) continue;
-    const winners = game.winnerName
-      ? lines.filter((line) => line.teamName === game.winnerName)
-      : [];
-    const losers = game.lastName
-      ? lines.filter((line) => line.teamName === game.lastName)
-      : [];
 
-    // Everyone owes their own lane fee for the game…
-    for (const line of lines) line.laneFee += LANE_FEE_PER_GAME;
-
-    // …but last place covers first place's lane fees that game.
-    if (
-      game.winnerName &&
-      game.lastName &&
-      game.winnerName !== game.lastName &&
-      winners.length &&
-      losers.length
-    ) {
-      const coverTotal = winners.length * LANE_FEE_PER_GAME;
-      const payEach = coverTotal / losers.length;
-      for (const loser of losers) loser.betPaid += payEach;
-      for (const winner of winners) winner.betReceived += LANE_FEE_PER_GAME;
-    }
+    for (const team of teams)
+      for (const player of team.players) {
+        const line = ensure(player, team.name);
+        line.laneFee += LANE_FEE_PER_GAME;
+        if (game.winnerName === team.name) line.wins += 1;
+        if (game.lastName === team.name && game.winnerName !== team.name)
+          line.losses += 1;
+      }
   }
 
-  return lines.map((line) => ({
-    ...line,
-    laneFee: Math.round(line.laneFee * 100) / 100,
-    betPaid: Math.round(line.betPaid * 100) / 100,
-    betReceived: Math.round(line.betReceived * 100) / 100,
-    netDue:
-      Math.round((line.laneFee + line.betPaid - line.betReceived) * 100) / 100,
-  }));
+  return [...byId.values()].map((line) => {
+    const laneFee = Math.round(line.laneFee * 100) / 100;
+    return {
+      ...line,
+      seriesTotal: playerSeriesTotal(input.scores[line.playerId]),
+      laneFee,
+      betPaid: 0,
+      betReceived: 0,
+      netDue: isFeeCollector(line.name) ? 0 : laneFee,
+    };
+  });
 }
 
 export function gameMargins(

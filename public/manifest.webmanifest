@@ -1,7 +1,7 @@
 {
-  "name": "Monday Bowling",
-  "short_name": "Bowling",
-  "description": "Monday bowling teams, scores, and history",
+  "name": "San Jose Korean Bowling",
+  "short_name": "SJ Bowling",
+  "description": "San Jose Korean bowling teams, scores, and history",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f1ea",

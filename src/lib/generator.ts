@@ -143,106 +143,64 @@ export function scoreTeams(
   };
 }
 
-function stratifiedStart(
+const HIGH_AVERAGE_SPLIT = 150;
+
+/** Shuffle ≥150 and <150 pools, then snake-deal onto teams (highs first, then lows). */
+function balancedByAverageSplit(
   players: GeneratorPlayer[],
   sizes: number[],
   random: () => number,
 ): GeneratorPlayer[][] {
+  const highs = shuffle(
+    players.filter((player) => player.usedAverage >= HIGH_AVERAGE_SPLIT),
+    random,
+  );
+  const lows = shuffle(
+    players.filter((player) => player.usedAverage < HIGH_AVERAGE_SPLIT),
+    random,
+  );
   const teams = sizes.map(() => [] as GeneratorPlayer[]);
-  for (const tier of TIERS) {
-    const group = shuffle(
-      players.filter((p) => p.tier === tier),
-      random,
-    );
-    let cursor = Math.floor(random() * teams.length);
-    let direction = random() < 0.5 ? 1 : -1;
-    for (const player of group) {
+
+  const snakeDeal = (pool: GeneratorPlayer[]) => {
+    let index = 0;
+    let direction = 1;
+    for (const player of pool) {
       let attempts = 0;
-      while (teams[cursor].length >= sizes[cursor] && attempts++ < teams.length)
-        cursor = (cursor + direction + teams.length) % teams.length;
-      teams[cursor].push(player);
-      cursor = (cursor + direction + teams.length) % teams.length;
-      if (cursor === 0 || cursor === teams.length - 1) direction *= -1;
+      while (
+        teams[index].length >= sizes[index] &&
+        attempts++ < teams.length * 2
+      ) {
+        index += direction;
+        if (index >= teams.length) {
+          index = teams.length - 1;
+          direction = -1;
+        } else if (index < 0) {
+          index = 0;
+          direction = 1;
+        }
+      }
+      teams[index].push(player);
+      if (teams.length === 1) continue;
+      index += direction;
+      if (index >= teams.length) {
+        index = teams.length - 1;
+        direction = -1;
+      } else if (index < 0) {
+        index = 0;
+        direction = 1;
+      }
     }
-  }
+  };
+
+  snakeDeal(highs);
+  snakeDeal(lows);
+
   const overflow = teams.flatMap((team, i) => team.splice(sizes[i]));
   for (const player of overflow) {
     const index = teams.findIndex((team, i) => team.length < sizes[i]);
-    teams[index].push(player);
+    if (index >= 0) teams[index].push(player);
   }
   return teams;
-}
-
-function improve(
-  teams: GeneratorPlayer[][],
-  pairs: PairCounts,
-  includeRepeats: boolean,
-  random: () => number,
-): GeneratorPlayer[][] {
-  let best = teams.map((team) => [...team]);
-  let bestScore = scoreTeams(best, pairs, includeRepeats).score;
-  for (let iteration = 0; iteration < 500; iteration++) {
-    const a = Math.floor(random() * best.length);
-    let b = Math.floor(random() * best.length);
-    if (a === b) b = (b + 1) % best.length;
-    const ai = Math.floor(random() * best[a].length);
-    const bi = Math.floor(random() * best[b].length);
-    const candidate = best.map((team) => [...team]);
-    [candidate[a][ai], candidate[b][bi]] = [candidate[b][bi], candidate[a][ai]];
-    const candidateScore = scoreTeams(candidate, pairs, includeRepeats).score;
-    if (
-      candidateScore < bestScore ||
-      (candidateScore === bestScore && random() < 0.08)
-    ) {
-      best = candidate;
-      bestScore = candidateScore;
-    }
-  }
-  return best;
-}
-
-function diversifyNearOptimal(
-  teams: GeneratorPlayer[][],
-  pairs: PairCounts,
-  includeRepeats: boolean,
-  random: () => number,
-): GeneratorPlayer[][] {
-  let varied = teams.map((team) => [...team]);
-  const baseline = scoreTeams(varied, pairs, includeRepeats).score;
-  const limit = baseline + Math.max(12, baseline * 0.005);
-  // Swap within skill tiers only: this preserves the high/low distribution
-  // while offering different teammate combinations for different seeds.
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const tier = TIERS[Math.floor(random() * TIERS.length)];
-    const eligible = varied
-      .map((team, teamIndex) => ({
-        teamIndex,
-        indices: team
-          .map((p, index) => (p.tier === tier ? index : -1))
-          .filter((index) => index >= 0),
-      }))
-      .filter((entry) => entry.indices.length > 0);
-    if (eligible.length < 2) continue;
-    const first = eligible[Math.floor(random() * eligible.length)];
-    let second = eligible[Math.floor(random() * eligible.length)];
-    if (first.teamIndex === second.teamIndex)
-      second = eligible[(eligible.indexOf(second) + 1) % eligible.length];
-    const candidate = varied.map((team) => [...team]);
-    const firstIndex =
-      first.indices[Math.floor(random() * first.indices.length)];
-    const secondIndex =
-      second.indices[Math.floor(random() * second.indices.length)];
-    [
-      candidate[first.teamIndex][firstIndex],
-      candidate[second.teamIndex][secondIndex],
-    ] = [
-      candidate[second.teamIndex][secondIndex],
-      candidate[first.teamIndex][firstIndex],
-    ];
-    if (scoreTeams(candidate, pairs, includeRepeats).score <= limit)
-      varied = candidate;
-  }
-  return varied;
 }
 
 export function generateTeams(options: {
@@ -276,35 +234,22 @@ export function generateTeams(options: {
     let cursor = 0;
     for (const size of sizes)
       selected.push(shuffled.slice(cursor, (cursor += size)));
-  } else {
-    const candidates: { teams: GeneratorPlayer[][]; score: number }[] = [];
-    for (let start = 0; start < 40; start++) {
-      const initial = stratifiedStart(players, sizes, random);
-      const teams = improve(
-        initial,
-        pairs,
-        mode === "BALANCED_REPEATS",
-        random,
-      );
-      candidates.push({
-        teams,
-        score: scoreTeams(teams, pairs, mode === "BALANCED_REPEATS").score,
-      });
+  } else if (mode === "BALANCED_REPEATS") {
+    // Same 150-split shuffle, try a few deals and keep the one with fewer repeats.
+    let best = balancedByAverageSplit(players, sizes, random);
+    let bestScore = scoreTeams(best, pairs, true).score;
+    for (let attempt = 0; attempt < 31; attempt++) {
+      const candidate = balancedByAverageSplit(players, sizes, random);
+      const candidateScore = scoreTeams(candidate, pairs, true).score;
+      if (candidateScore < bestScore) {
+        best = candidate;
+        bestScore = candidateScore;
+      }
     }
-    candidates.sort((a, b) => a.score - b.score);
-    // Keep enough equally fair candidates that changing a seed produces a
-    // genuinely different reshuffle. Tier and size penalties remain dominant,
-    // while this broader window admits small scratch-score tradeoffs.
-    const tolerance = Math.max(400, candidates[0].score * 0.2);
-    const nearOptimal = candidates
-      .filter((candidate) => candidate.score <= candidates[0].score + tolerance)
-      .slice(0, 10);
-    selected = diversifyNearOptimal(
-      nearOptimal[Math.floor(random() * nearOptimal.length)].teams,
-      pairs,
-      mode === "BALANCED_REPEATS",
-      random,
-    );
+    selected = best;
+  } else {
+    // BALANCED: avg ≥150 / <150 pools, random within each, no handicap optimizing.
+    selected = balancedByAverageSplit(players, sizes, random);
   }
 
   const fairness = scoreTeams(selected, pairs, mode === "BALANCED_REPEATS");

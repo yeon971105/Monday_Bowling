@@ -6,6 +6,10 @@ import { NextRequest } from "next/server";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "monday-scoring-"));
 process.env.BOWLING_DB_PATH = path.join(tempDir, "scoring.db");
+delete process.env.TURSO_DATABASE_URL;
+delete process.env.TURSO_AUTH_TOKEN;
+delete process.env.LIBSQL_URL;
+delete process.env.LIBSQL_AUTH_TOKEN;
 
 const routeContext = (segments: string[]) => ({
   params: Promise.resolve({ segments }),
@@ -106,47 +110,53 @@ describe("session save updates MANUAL monday averages", () => {
       "999002": [140, 140, 140],
     };
 
-    const save = await POST(
-      new NextRequest("http://localhost/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionDate: "2026-07-20",
-          mode: "BALANCED",
-          targetTeamSize: 2,
-          seed: "test-seed",
-          attendees: teams.flatMap((team) => team.players),
-          teams,
-          fairness: { score: 0 },
-          scores,
-          results: [
-            {
-              teamName: "Team 1",
-              gameTotals: [180, 190, 200],
-              scratchTotal: 570,
-              handicapTotal: 0,
-              finalTotal: 570,
-              handicapPerGame: 0,
-              won: true,
-            },
-            {
-              teamName: "Team 2",
-              gameTotals: [280, 280, 280],
-              scratchTotal: 840,
-              handicapTotal: 0,
-              finalTotal: 840,
-              handicapPerGame: 0,
-              won: false,
-            },
-          ],
-          gameCount: 3,
+    const sessionBody = {
+      mode: "BALANCED",
+      targetTeamSize: 2,
+      seed: "test-seed",
+      attendees: teams.flatMap((team) => team.players),
+      teams,
+      fairness: { score: 0 },
+      scores,
+      results: [
+        {
+          teamName: "Team 1",
+          gameTotals: [180, 190, 200],
+          scratchTotal: 570,
+          handicapTotal: 0,
+          finalTotal: 570,
+          handicapPerGame: 0,
+          won: true,
+        },
+        {
+          teamName: "Team 2",
+          gameTotals: [280, 280, 280],
+          scratchTotal: 840,
+          handicapTotal: 0,
+          finalTotal: 840,
+          handicapPerGame: 0,
+          won: false,
+        },
+      ],
+      gameCount: 3,
+    };
+
+    // Guests without a league average need 3 Monday nights before history avg applies.
+    for (const sessionDate of ["2026-07-06", "2026-07-13", "2026-07-20"]) {
+      const save = await POST(
+        new NextRequest("http://localhost/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...sessionBody, sessionDate }),
         }),
-      }),
-      routeContext(["sessions"]),
-    );
-    expect(save.ok).toBe(true);
-    const saved = await save.json();
-    expect(saved.manualAveragesUpdated).toBeGreaterThanOrEqual(1);
+        routeContext(["sessions"]),
+      );
+      expect(save.ok).toBe(true);
+      if (sessionDate === "2026-07-20") {
+        const saved = await save.json();
+        expect(saved.manualAveragesUpdated).toBeGreaterThanOrEqual(1);
+      }
+    }
 
     const playersResponse = await GET(
       new NextRequest("http://localhost/api/players"),
@@ -172,8 +182,9 @@ describe("session save updates MANUAL monday averages", () => {
     );
     expect(guestStats).toMatchObject({
       mondayAverage: 190,
-      wins: 1,
-      sessions: 1,
+      wins: 0,
+      losses: 9,
+      sessions: 3,
     });
   });
 });

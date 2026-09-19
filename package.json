@@ -2,6 +2,12 @@
   "name": "monday-bowling",
   "version": "1.0.0",
   "private": true,
+  "description": "San Jose Korean bowling league PWA — teams, scores, club pot, and history",
+  "homepage": "https://monday-bowling.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yeon971105/Monday_Bowling.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

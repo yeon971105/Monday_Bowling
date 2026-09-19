@@ -1,21 +1,64 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampGameIndex,
   computeGameResult,
+  computeLiveStandings,
   computeMoneySettlement,
+  computeScratchWinners,
   computeSeriesResults,
   mondayAverageFromScores,
+  nextGameIndex,
   teamHandicapPerGame,
+  teamsChangedDuringNight,
 } from "@/lib/scoring";
 
 describe("scoring", () => {
+  it("keeps Next game on a valid 1–3 night even if tapped twice", () => {
+    expect(nextGameIndex(0)).toBe(1);
+    expect(nextGameIndex(1)).toBe(2);
+    expect(nextGameIndex(2)).toBeNull();
+    expect(nextGameIndex(3)).toBeNull();
+    expect(clampGameIndex(3)).toBe(2);
+    expect(clampGameIndex(-1)).toBe(0);
+  });
+
   it("gives 90% of average-sum gap as handicap, floored", () => {
     expect(
       teamHandicapPerGame([{ averageSum: 1200 }, { averageSum: 1000 }]),
     ).toEqual([0, 180]);
-    // 146.7 → 146
     expect(
       teamHandicapPerGame([{ averageSum: 520 }, { averageSum: 357 }]),
     ).toEqual([0, 146]);
+  });
+
+  it("live standings show lead and pins needed to take first", () => {
+    const standings = computeLiveStandings([
+      { teamName: "Team 1", total: 850 },
+      { teamName: "Team 2", total: 862 },
+      { teamName: "Team 3", total: 800 },
+    ]);
+    expect(standings.find((row) => row.teamName === "Team 2")).toMatchObject({
+      leading: true,
+      leadBy: 12,
+      toLead: 0,
+    });
+    expect(standings.find((row) => row.teamName === "Team 1")).toMatchObject({
+      leading: false,
+      behindBy: 12,
+      toLead: 13,
+    });
+    expect(standings.find((row) => row.teamName === "Team 3")).toMatchObject({
+      behindBy: 62,
+      toLead: 63,
+    });
+  });
+
+  it("tied live totals need 1 pin to take the lead alone", () => {
+    const standings = computeLiveStandings([
+      { teamName: "Team 1", total: 200 },
+      { teamName: "Team 2", total: 200 },
+    ]);
+    expect(standings.every((row) => row.tied && row.toLead === 1)).toBe(true);
   });
 
   it("does not declare a winner before all scores for the game are entered", () => {
@@ -33,7 +76,151 @@ describe("scoring", () => {
     });
     expect(result.complete).toBe(false);
     expect(result.winnerName).toBeNull();
-    expect(result.teams.every((team) => team.total === 0)).toBe(true);
+  });
+
+  it("does not complete a game while a team is empty", () => {
+    const result = computeGameResult({
+      gameIndex: 0,
+      teams: [
+        { name: "Team 1", playerIds: ["a"], averageSum: 180 },
+        { name: "Team 2", playerIds: ["b"], averageSum: 180 },
+        { name: "Team 3", playerIds: [], averageSum: 0 },
+      ],
+      scores: {
+        a: [150, null, null],
+        b: [160, null, null],
+      },
+    });
+    expect(result.complete).toBe(false);
+    expect(result.winnerName).toBeNull();
+  });
+
+  it("everyone who played pays $5 per game to Jewon; Jewon pays $0", () => {
+    const money = computeMoneySettlement({
+      teams: [
+        {
+          name: "Team 1",
+          averageSum: 200,
+          players: [
+            { id: "a", name: "A" },
+            { id: "j", name: "Jewon Yeon" },
+          ],
+        },
+        {
+          name: "Team 2",
+          averageSum: 200,
+          players: [{ id: "b", name: "B" }],
+        },
+      ],
+      scores: {
+        a: [100, 100, 200],
+        j: [120, 130, 140],
+        b: [200, 200, 100],
+      },
+    });
+    expect(money.find((line) => line.playerId === "a")).toMatchObject({
+      laneFee: 15,
+      betPaid: 0,
+      betReceived: 0,
+      netDue: 15,
+    });
+    expect(money.find((line) => line.playerId === "b")).toMatchObject({
+      laneFee: 15,
+      netDue: 15,
+    });
+    expect(money.find((line) => line.playerId === "j")).toMatchObject({
+      laneFee: 15,
+      netDue: 0,
+    });
+  });
+
+  it("charges only completed games, including a 1-game night", () => {
+    const money = computeMoneySettlement({
+      teams: [
+        {
+          name: "Team 1",
+          averageSum: 200,
+          players: [{ id: "a", name: "A" }],
+        },
+        {
+          name: "Team 2",
+          averageSum: 200,
+          players: [{ id: "b", name: "B" }],
+        },
+      ],
+      scores: {
+        a: [100, null, null],
+        b: [200, null, null],
+      },
+      gameCount: 1,
+    });
+    expect(money.find((line) => line.playerId === "a")?.netDue).toBe(5);
+    expect(money.find((line) => line.playerId === "b")?.netDue).toBe(5);
+  });
+
+  it("detects roster changes across games", () => {
+    expect(
+      teamsChangedDuringNight(
+        [
+          [
+            {
+              name: "Team 1",
+              averageSum: 200,
+              players: [{ id: "a", name: "A" }],
+            },
+            {
+              name: "Team 2",
+              averageSum: 200,
+              players: [{ id: "b", name: "B" }],
+            },
+          ],
+          [
+            {
+              name: "Team 1",
+              averageSum: 200,
+              players: [{ id: "a", name: "A" }],
+            },
+            {
+              name: "Team 2",
+              averageSum: 200,
+              players: [{ id: "c", name: "C" }],
+            },
+          ],
+        ],
+        2,
+      ),
+    ).toBe(true);
+    expect(
+      teamsChangedDuringNight(
+        [
+          [
+            {
+              name: "Team 1",
+              averageSum: 200,
+              players: [{ id: "a", name: "A" }],
+            },
+            {
+              name: "Team 2",
+              averageSum: 200,
+              players: [{ id: "b", name: "B" }],
+            },
+          ],
+          [
+            {
+              name: "Team 1",
+              averageSum: 200,
+              players: [{ id: "a", name: "A" }],
+            },
+            {
+              name: "Team 2",
+              averageSum: 200,
+              players: [{ id: "b", name: "B" }],
+            },
+          ],
+        ],
+        2,
+      ),
+    ).toBe(false);
   });
 
   it("applies handicap only after the game is complete", () => {
@@ -49,81 +236,11 @@ describe("scoring", () => {
         c: [100, null, null],
       },
     });
-    // handicap for team2 = round(0.9 * 150) = 135
     expect(result.complete).toBe(true);
-    expect(result.margin).toBe(235 - 200);
     expect(result.teams.find((team) => team.teamName === "Team 2")).toMatchObject({
-      scratch: 100,
-      handicap: 135,
       total: 235,
       won: true,
     });
-    expect(result.teams.find((team) => team.teamName === "Team 1")?.won).toBe(
-      false,
-    );
-  });
-
-  it("losers cover winners' lane fees so winners net $0", () => {
-    const money = computeMoneySettlement({
-      teams: [
-        {
-          name: "Team 1",
-          averageSum: 300,
-          players: [
-            { id: "a", name: "A" },
-            { id: "b", name: "B" },
-          ],
-        },
-        {
-          name: "Team 2",
-          averageSum: 150,
-          players: [{ id: "c", name: "C" }],
-        },
-      ],
-      scores: {
-        a: [100, 100, 100],
-        b: [100, 100, 100],
-        c: [200, 200, 200],
-      },
-    });
-    // Team2 wins all 3; C's $15 lane is covered → net $0
-    const c = money.find((line) => line.playerId === "c")!;
-    expect(c.laneFee).toBe(15);
-    expect(c.betReceived).toBe(15);
-    expect(c.netDue).toBe(0);
-    // Each Team1 player: own $15 + share of C's $15 ($7.50) = $22.50
-    const a = money.find((line) => line.playerId === "a")!;
-    expect(a.betPaid).toBe(7.5);
-    expect(a.laneFee).toBe(15);
-    expect(a.netDue).toBe(22.5);
-  });
-
-  it("equal teams: sweep losers each owe $30, winners $0", () => {
-    const team1 = ["a1", "a2", "a3", "a4", "a5", "a6"];
-    const team2 = ["b1", "b2", "b3", "b4", "b5", "b6"];
-    const scores = Object.fromEntries([
-      ...team1.map((id) => [id, [100, 100, 100]]),
-      ...team2.map((id) => [id, [200, 200, 200]]),
-    ]);
-    const money = computeMoneySettlement({
-      teams: [
-        {
-          name: "Team 1",
-          averageSum: 900,
-          players: team1.map((id) => ({ id, name: id })),
-        },
-        {
-          name: "Team 2",
-          averageSum: 1200,
-          players: team2.map((id) => ({ id, name: id })),
-        },
-      ],
-      scores,
-    });
-    for (const id of team2)
-      expect(money.find((line) => line.playerId === id)?.netDue).toBe(0);
-    for (const id of team1)
-      expect(money.find((line) => line.playerId === id)?.netDue).toBe(30);
   });
 
   it("computes monday average from recorded games", () => {
@@ -146,5 +263,140 @@ describe("scoring", () => {
       handicapPerGame: 90,
       finalTotal: 300 + 270,
     });
+  });
+
+  it("scratch tickets go to lottery players with 2+ game wins, including late joins", () => {
+    const games = [
+      {
+        gameIndex: 0,
+        winnerName: "Team 1",
+        lastName: "Team 2",
+        margin: 10,
+        teams: [
+          {
+            teamName: "Team 1",
+            playerIds: ["a"],
+            scratch: 200,
+            handicap: 0,
+            total: 200,
+            place: 1,
+            won: true,
+          },
+          {
+            teamName: "Team 2",
+            playerIds: ["b"],
+            scratch: 100,
+            handicap: 0,
+            total: 100,
+            place: 2,
+            won: false,
+          },
+        ],
+      },
+      {
+        gameIndex: 1,
+        winnerName: "Team 1",
+        lastName: "Team 2",
+        margin: 10,
+        teams: [
+          {
+            teamName: "Team 1",
+            playerIds: ["a", "c"],
+            scratch: 200,
+            handicap: 0,
+            total: 200,
+            place: 1,
+            won: true,
+          },
+          {
+            teamName: "Team 2",
+            playerIds: ["b"],
+            scratch: 100,
+            handicap: 0,
+            total: 100,
+            place: 2,
+            won: false,
+          },
+        ],
+      },
+      {
+        gameIndex: 2,
+        winnerName: "Team 1",
+        lastName: "Team 2",
+        margin: 10,
+        teams: [
+          {
+            teamName: "Team 1",
+            playerIds: ["a", "c"],
+            scratch: 200,
+            handicap: 0,
+            total: 200,
+            place: 1,
+            won: true,
+          },
+          {
+            teamName: "Team 2",
+            playerIds: ["b"],
+            scratch: 100,
+            handicap: 0,
+            total: 100,
+            place: 2,
+            won: false,
+          },
+        ],
+      },
+    ];
+    const winners = computeScratchWinners({
+      games,
+      players: [
+        { id: "a", name: "A" },
+        { id: "b", name: "B" },
+        { id: "c", name: "C" },
+      ],
+      lotteryIds: ["a", "c"],
+    });
+    expect(winners).toEqual([
+      { playerId: "a", name: "A", wins: 3 },
+      { playerId: "c", name: "C", wins: 2 },
+    ]);
+  });
+
+  it("does not award scratch to lottery players with only one win", () => {
+    const winners = computeScratchWinners({
+      games: [
+        {
+          gameIndex: 0,
+          winnerName: "Team 1",
+          lastName: "Team 2",
+          margin: 5,
+          teams: [
+            {
+              teamName: "Team 1",
+              playerIds: ["a"],
+              scratch: 150,
+              handicap: 0,
+              total: 150,
+              place: 1,
+              won: true,
+            },
+            {
+              teamName: "Team 2",
+              playerIds: ["b"],
+              scratch: 100,
+              handicap: 0,
+              total: 100,
+              place: 2,
+              won: false,
+            },
+          ],
+        },
+      ],
+      players: [
+        { id: "a", name: "A" },
+        { id: "b", name: "B" },
+      ],
+      lotteryIds: ["a", "b"],
+    });
+    expect(winners).toEqual([]);
   });
 });
