@@ -231,7 +231,7 @@ export default function Home() {
         <div className="brand">
           <div className="ball" />
           <div>
-            <h1>San Jose Korean Bowling</h1>
+            <h1>Dopamine Bowling</h1>
             <small>Play · Club · History</small>
           </div>
         </div>

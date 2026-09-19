@@ -1,8 +1,6 @@
-# Monday Bowling
+# Dopamine Bowling
 
-산호세 한인 볼링 리그 앱. 팀 구성, 점수, 클럽 회비, 히스토리를 한곳에서 관리합니다.
-
-San Jose Korean bowling league app — teams, scores, club pot, and history.
+Weekly bowling league app for teams, scores, club pot, and history.
 Works on iPhone as a free home-screen app (PWA).
 
 **Live:** https://monday-bowling.vercel.app
@@ -10,7 +8,7 @@ Works on iPhone as a free home-screen app (PWA).
 ## Features
 
 **Play**
-- Check in who is bowling, generate 2 or 3 balanced teams, enter 3 games
+- Check in who is bowling, generate 2 or 3 balanced teams, and enter 3 games
 - A red **S** follows club members on setup, games, and History
 - A $10 scratch ticket goes out when a team of club members wins 2+ games that night
 

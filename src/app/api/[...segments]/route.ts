@@ -756,7 +756,7 @@ export async function POST(request: NextRequest, context: Context) {
         !backup?.data?.players ||
         !backup?.data?.settings
       )
-        throw new Error("This is not a valid Monday Bowling backup");
+        throw new Error("This is not a valid Dopamine Bowling backup");
       const tables = [
         "settings",
         "players",

@@ -2,7 +2,7 @@
   "name": "monday-bowling",
   "version": "1.0.0",
   "private": true,
-  "description": "San Jose Korean bowling league PWA — teams, scores, club pot, and history",
+  "description": "Dopamine Bowling — weekly league PWA for teams, scores, club pot, and history",
   "homepage": "https://monday-bowling.vercel.app",
   "repository": {
     "type": "git",
