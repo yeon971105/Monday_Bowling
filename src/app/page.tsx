@@ -5,6 +5,7 @@ import {
   buildStoredGameResults,
   clampGameIndex,
   computeGameResult,
+  computeLastGamePrize,
   computeLiveStandings,
   computeScratchWinners,
   computeSeriesResults,
@@ -16,6 +17,7 @@ import {
   playerSeriesTotal,
   toSessionTeamResults,
   type MoneyTeam,
+  type LastGamePrize,
   type ScoreMap,
   type ScratchWinner,
   type TeamForScoring,
@@ -35,9 +37,7 @@ import type {
 type Tab = "play" | "club" | "history";
 type PlayStep = "setup" | "game" | "reset" | "summary";
 
-const toMoneyTeams = (
-  teams: GenerationResult["teams"],
-): MoneyTeam[] =>
+const toMoneyTeams = (teams: GenerationResult["teams"]): MoneyTeam[] =>
   teams.map((team) => ({
     name: team.name,
     averageSum: team.players.reduce(
@@ -79,6 +79,7 @@ type SavedSession = {
   results: SessionTeamResult[];
   lotteryIds?: Array<string | number>;
   scratchWinners?: ScratchWinner[];
+  lastGamePrize?: LastGamePrize | null;
   gameCount: number;
 };
 
@@ -124,7 +125,6 @@ type NightDraft = {
   step: PlayStep;
   gameIndex: number;
   gameCount: number;
-  date: string;
   mode: BalancingMode;
   teamCount: number;
   seed: string;
@@ -134,6 +134,7 @@ type NightDraft = {
   teamsByGame: Array<GenerationResult["teams"] | null>;
   scores: ScoreMap;
   scratchWinners: ScratchWinner[];
+  lastGamePrize: LastGamePrize | null;
   savedOnce: boolean;
 };
 
@@ -177,18 +178,14 @@ function syncBannerText(result: SyncResult): string {
     extras.push(
       `unlocked ${result.historyUnlocked} guest avg${result.historyUnlocked === 1 ? "" : "s"}`,
     );
-  if (
-    (result.historyAveragesUpdated ?? 0) >
-    (result.historyUnlocked ?? 0)
-  )
+  if ((result.historyAveragesUpdated ?? 0) > (result.historyUnlocked ?? 0))
     extras.push(
       `history avg ×${(result.historyAveragesUpdated ?? 0) - (result.historyUnlocked ?? 0)}`,
     );
   const suffix = extras.length ? ` · ${extras.join(", ")}` : "";
   if (result.skipped && !(result.historyAveragesUpdated ?? 0))
     return `${week} already up to date.`;
-  if (result.skipped)
-    return `${week} sheet unchanged${suffix}.`;
+  if (result.skipped) return `${week} sheet unchanged${suffix}.`;
   return `${week}: updated ${result.updated} Monday member average${result.updated === 1 ? "" : "s"}${suffix}.`;
 }
 
@@ -307,13 +304,12 @@ function PlayTab({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [teamCount, setTeamCount] = useState(2);
   const [mode, setMode] = useState<BalancingMode>("BALANCED");
-  const [date, setDate] = useState(localDateInputValue);
   const [seed, setSeed] = useState(newSeed());
   const [result, setResult] = useState<GenerationResult>();
   const [teamsByGame, setTeamsByGame] = useState<
     Array<GenerationResult["teams"] | null>
   >([null, null, null]);
-  const [resetTargetGame, setResetTargetGame] = useState(0);
+  const [resetTargetGame] = useState(0);
   const [scores, setScores] = useState<ScoreMap>({});
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -336,6 +332,9 @@ function PlayTab({
   const [teamGuestName, setTeamGuestName] = useState("");
   const [teamGuestAvg, setTeamGuestAvg] = useState("");
   const [scratchWinners, setScratchWinners] = useState<ScratchWinner[]>([]);
+  const [lastGamePrize, setLastGamePrize] = useState<LastGamePrize | null>(
+    null,
+  );
   const [savedOnce, setSavedOnce] = useState(false);
   const draftReady = useRef(false);
   const skipNextDraftSave = useRef(false);
@@ -343,7 +342,9 @@ function PlayTab({
   const scratchIds = useMemo(
     () =>
       new Set(
-        players.filter((player) => player.scratchPool).map((player) => player.id),
+        players
+          .filter((player) => player.scratchPool)
+          .map((player) => player.id),
       ),
     [players],
   );
@@ -382,7 +383,6 @@ function PlayTab({
     setStep(draft.step === "reset" ? "game" : draft.step);
     setGameIndex(clampGameIndex(draft.gameIndex));
     setGameCount(draft.gameCount);
-    setDate(draft.date);
     setMode(draft.mode);
     setTeamCount(draft.teamCount);
     setSeed(draft.seed);
@@ -391,6 +391,7 @@ function PlayTab({
     setTeamsByGame(draft.teamsByGame);
     setScores(draft.scores);
     setScratchWinners(draft.scratchWinners ?? []);
+    setLastGamePrize(draft.lastGamePrize ?? null);
     setSavedOnce(Boolean(draft.savedOnce));
     setMessage("Restored your in-progress night.");
   }, []);
@@ -414,7 +415,6 @@ function PlayTab({
         step,
         gameIndex,
         gameCount,
-        date,
         mode,
         teamCount,
         seed,
@@ -424,6 +424,7 @@ function PlayTab({
         teamsByGame,
         scores,
         scratchWinners,
+        lastGamePrize,
         savedOnce,
       });
     }, 250);
@@ -432,7 +433,6 @@ function PlayTab({
     step,
     gameIndex,
     gameCount,
-    date,
     mode,
     teamCount,
     seed,
@@ -442,19 +442,22 @@ function PlayTab({
     teamsByGame,
     scores,
     scratchWinners,
+    lastGamePrize,
     savedOnce,
   ]);
 
   useEffect(() => {
     const flush = () => {
-      if (!result || (step !== "game" && step !== "summary" && step !== "reset"))
+      if (
+        !result ||
+        (step !== "game" && step !== "summary" && step !== "reset")
+      )
         return;
       writeNightDraft({
         v: 1,
         step,
         gameIndex,
         gameCount,
-        date,
         mode,
         teamCount,
         seed,
@@ -464,6 +467,7 @@ function PlayTab({
         teamsByGame,
         scores,
         scratchWinners,
+        lastGamePrize,
         savedOnce,
       });
     };
@@ -480,7 +484,6 @@ function PlayTab({
     step,
     gameIndex,
     gameCount,
-    date,
     mode,
     teamCount,
     seed,
@@ -490,6 +493,7 @@ function PlayTab({
     teamsByGame,
     scores,
     scratchWinners,
+    lastGamePrize,
     savedOnce,
   ]);
 
@@ -569,8 +573,7 @@ function PlayTab({
   }, [scoringTeams, scores, gameIndex]);
 
   const liveStandings = useMemo(
-    () =>
-      gameResult ? computeLiveStandings(gameResult.teams) : [],
+    () => (gameResult ? computeLiveStandings(gameResult.teams) : []),
     [gameResult],
   );
 
@@ -602,7 +605,9 @@ function PlayTab({
   const nightHasScores = useMemo(
     () =>
       Object.values(scores).some((games) =>
-        games.some((value) => typeof value === "number" && Number.isFinite(value)),
+        games.some(
+          (value) => typeof value === "number" && Number.isFinite(value),
+        ),
       ),
     [scores],
   );
@@ -639,7 +644,11 @@ function PlayTab({
         prev.map((entry) => (entry.id === updated.id ? updated : entry)),
       );
       setAvgDraft((prev) => ({ ...prev, [updated.id]: String(value) }));
-      setMessage(`${updated.displayName} average locked at ${value}.`);
+      setMessage(
+        updated.averageMode === "FIXED"
+          ? `${updated.displayName} average locked at ${value}.`
+          : `${updated.displayName} uses Monday average after 10 games.`,
+      );
     } catch (error: any) {
       setMessage(error.message);
     } finally {
@@ -663,10 +672,7 @@ function PlayTab({
           ...player,
           averageMode: nextMode,
           fixedAverage: null,
-          manualAverage:
-            nextMode === "MANUAL"
-              ? current
-              : player.manualAverage,
+          manualAverage: nextMode === "MANUAL" ? current : player.manualAverage,
           leagueAverage: player.leagueAverage,
         }),
       });
@@ -712,9 +718,7 @@ function PlayTab({
       targets.length === 1
         ? targets[0].displayName
         : `${targets.length} players`;
-    if (
-      !confirm(`Remove ${label} from the roster? This cannot be undone.`)
-    )
+    if (!confirm(`Remove ${label} from the roster? This cannot be undone.`))
       return;
     setBusy(true);
     setMessage("");
@@ -835,9 +839,7 @@ function PlayTab({
       } else {
         setScores(
           emptyScores(
-            data.teams.flatMap((team) =>
-              team.players.map((p) => String(p.id)),
-            ),
+            data.teams.flatMap((team) => team.players.map((p) => String(p.id))),
           ),
         );
         setTeamsByGame([data.teams, null, null]);
@@ -845,6 +847,7 @@ function PlayTab({
         setGameCount(GAMES_PER_SESSION);
         setSavedOnce(false);
         setScratchWinners([]);
+        setLastGamePrize(null);
         setGameEditing(false);
         if (!options?.stayOnGame) setStep("game");
         setMessage("");
@@ -856,13 +859,48 @@ function PlayTab({
     }
   };
 
-  const patchResultTeams = (
-    nextTeams: GenerationResult["teams"],
-  ) => {
+  const startManualTeams = () => {
+    if (participants.length < teamCount) {
+      setMessage(`Select at least ${teamCount} players with averages`);
+      return;
+    }
+    const nextSeed = newSeed();
+    const blankTeams = Array.from({ length: teamCount }, (_, index) => ({
+      name: `Team ${index + 1}`,
+      players: [] as GeneratorPlayer[],
+      metrics: teamMetrics([]),
+    }));
+    const recalculated = recalculateTeams(blankTeams);
+    const manualResult: GenerationResult = {
+      seed: nextSeed,
+      teams: recalculated.teams,
+      fairness: recalculated.fairness,
+    };
+    setSeed(nextSeed);
+    setMode("MANUAL");
+    setResult(manualResult);
+    setScores(emptyScores(participants.map((player) => String(player.id))));
+    setTeamsByGame([manualResult.teams, null, null]);
+    setGameIndex(0);
+    setGameCount(GAMES_PER_SESSION);
+    setSavedOnce(false);
+    setScratchWinners([]);
+    setLastGamePrize(null);
+    setGameEditing(true);
+    setGenerateOpen(false);
+    setStep("game");
+    setMessage("Manual teams ready — add each player to a team.");
+  };
+
+  const patchResultTeams = (nextTeams: GenerationResult["teams"]) => {
     const recalculated = recalculateTeams(nextTeams);
     setResult((prev) =>
       prev
-        ? { ...prev, teams: recalculated.teams, fairness: recalculated.fairness }
+        ? {
+            ...prev,
+            teams: recalculated.teams,
+            fairness: recalculated.fairness,
+          }
         : prev,
     );
     setTeamsByGame((prev) => {
@@ -901,7 +939,9 @@ function PlayTab({
     const team = result.teams.find((entry) => entry.name === teamName);
     if (
       team?.players.length &&
-      !confirm(`Remove ${teamName} and its ${team.players.length} player(s) from this game?`)
+      !confirm(
+        `Remove ${teamName} and its ${team.players.length} player(s) from this game?`,
+      )
     )
       return;
     patchResultTeams(result.teams.filter((entry) => entry.name !== teamName));
@@ -996,8 +1036,7 @@ function PlayTab({
       ),
     );
     return players.filter(
-      (player) =>
-        player.usedAverage != null && !onTeams.has(String(player.id)),
+      (player) => player.usedAverage != null && !onTeams.has(String(player.id)),
     );
   }, [players, result]);
 
@@ -1102,29 +1141,42 @@ function PlayTab({
         players: nightPlayers,
         lotteryIds: scratchIds,
       });
+      const prize =
+        count >= GAMES_PER_SESSION
+          ? computeLastGamePrize({
+              players: (rosters[GAMES_PER_SESSION - 1] ?? []).flatMap(
+                (team) => team.players,
+              ),
+              scores: clearedScores,
+            })
+          : null;
       setScratchWinners(winners);
+      setLastGamePrize(prize);
       if (!savedOnce) {
-        await api("/api/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionDate: date,
-            mode,
-            targetTeamSize: Math.ceil(participants.length / teamCount),
-            seed,
-            attendees: participants,
-            teams: result.teams,
-            generatedTeams: result.teams,
-            fairness: result.fairness,
-            scores: clearedScores,
-            results: sessionResults,
-            gameRosters: rosters.slice(0, count),
-            gameResults,
-            lotteryIds: [...scratchIds],
-            scratchWinners: winners,
-            gameCount: count,
-          }),
-        });
+        const saved = await api<{ lastGamePrize: LastGamePrize }>(
+          "/api/sessions",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode,
+              targetTeamSize: Math.ceil(nightPlayers.length / teamCount),
+              seed,
+              attendees: nightPlayers,
+              teams: result.teams,
+              generatedTeams: result.teams,
+              fairness: result.fairness,
+              scores: clearedScores,
+              results: sessionResults,
+              gameRosters: rosters.slice(0, count),
+              gameResults,
+              lotteryIds: [...scratchIds],
+              scratchWinners: winners,
+              gameCount: count,
+            }),
+          },
+        );
+        setLastGamePrize(saved.lastGamePrize);
         setSavedOnce(true);
         onSaved();
       }
@@ -1250,6 +1302,7 @@ function PlayTab({
     setGameIndex(0);
     setGameCount(GAMES_PER_SESSION);
     setScratchWinners([]);
+    setLastGamePrize(null);
     setSavedOnce(false);
     setGameEditing(false);
     setAddToTeamName(null);
@@ -1300,7 +1353,9 @@ function PlayTab({
               <p>Check who’s bowling.</p>
             </div>
             <div className="actions">
-              <span className="badge selected-count">{selected.size} selected</span>
+              <span className="badge selected-count">
+                {selected.size} selected
+              </span>
               <button
                 className="button secondary"
                 disabled={syncBusy || busy}
@@ -1330,14 +1385,9 @@ function PlayTab({
                   </button>
                 </div>
               </div>
-              <label className="field" style={{ minWidth: 160 }}>
-                Date
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(event) => setDate(event.target.value)}
-                />
-              </label>
+              <p className="muted" style={{ margin: 0 }}>
+                Session date is set automatically.
+              </p>
             </div>
           </div>
 
@@ -1375,10 +1425,7 @@ function PlayTab({
                     >
                       Remove{removeIds.size ? ` (${removeIds.size})` : ""}
                     </button>
-                    <button
-                      className="button small"
-                      onClick={exitRosterEdit}
-                    >
+                    <button className="button small" onClick={exitRosterEdit}>
                       Done
                     </button>
                   </>
@@ -1431,9 +1478,7 @@ function PlayTab({
                         setRemoveIds(
                           allMarked
                             ? new Set()
-                            : new Set(
-                                sortedPlayers.map((player) => player.id),
-                              ),
+                            : new Set(sortedPlayers.map((player) => player.id)),
                         );
                       } else {
                         const allSelected = sortedPlayers.every((player) =>
@@ -1442,9 +1487,7 @@ function PlayTab({
                         setSelected(
                           allSelected
                             ? new Set()
-                            : new Set(
-                                sortedPlayers.map((player) => player.id),
-                              ),
+                            : new Set(sortedPlayers.map((player) => player.id)),
                         );
                       }
                     }}
@@ -1467,57 +1510,57 @@ function PlayTab({
                   ? removeIds.has(player.id)
                   : selected.has(player.id);
                 return (
-                <div
-                  className={`roster-row roster-edit ${rosterEditing && checked ? "roster-mark-remove" : ""}`}
-                  key={player.id}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() =>
-                      rosterEditing
-                        ? toggleRemove(player.id)
-                        : toggle(player.id)
-                    }
-                  />
-                  <span className="roster-name">
-                    <NameWithScratch
-                      name={player.displayName}
-                      on={player.scratchPool}
-                    />
-                    <small className="muted">
-                      {locked ? "LOCKED" : player.averageMode}
-                      {player.leagueAverage != null
-                        ? ` · league ${player.leagueAverage}`
-                        : ""}
-                    </small>
-                  </span>
-                  <div className="avg-edit">
+                  <div
+                    className={`roster-row roster-edit ${rosterEditing && checked ? "roster-mark-remove" : ""}`}
+                    key={player.id}
+                  >
                     <input
-                      type="number"
-                      min={0}
-                      max={300}
-                      disabled={locked || busy}
-                      value={avgDraft[player.id] ?? ""}
-                      onChange={(event) =>
-                        setAvgDraft((prev) => ({
-                          ...prev,
-                          [player.id]: event.target.value,
-                        }))
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        rosterEditing
+                          ? toggleRemove(player.id)
+                          : toggle(player.id)
                       }
                     />
-                    <button
-                      type="button"
-                      className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
-                      disabled={busy}
-                      onClick={() =>
-                        locked ? unlockAverage(player) : lockAverage(player)
-                      }
-                    >
-                      {locked ? "Unlock" : "Lock"}
-                    </button>
+                    <span className="roster-name">
+                      <NameWithScratch
+                        name={player.displayName}
+                        on={player.scratchPool}
+                      />
+                      <small className="muted">
+                        {locked ? "LOCKED" : player.averageMode}
+                        {player.leagueAverage != null
+                          ? ` · league ${player.leagueAverage}`
+                          : ""}
+                      </small>
+                    </span>
+                    <div className="avg-edit">
+                      <input
+                        type="number"
+                        min={0}
+                        max={300}
+                        disabled={locked || busy}
+                        value={avgDraft[player.id] ?? ""}
+                        onChange={(event) =>
+                          setAvgDraft((prev) => ({
+                            ...prev,
+                            [player.id]: event.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
+                        disabled={busy}
+                        onClick={() =>
+                          locked ? unlockAverage(player) : lockAverage(player)
+                        }
+                      >
+                        {locked ? "Unlock" : "Lock"}
+                      </button>
+                    </div>
                   </div>
-                </div>
                 );
               })}
             </div>
@@ -1612,10 +1655,7 @@ function PlayTab({
                     >
                       Remove{removeIds.size ? ` (${removeIds.size})` : ""}
                     </button>
-                    <button
-                      className="button small"
-                      onClick={exitRosterEdit}
-                    >
+                    <button className="button small" onClick={exitRosterEdit}>
                       Done
                     </button>
                   </>
@@ -1657,9 +1697,7 @@ function PlayTab({
                         setRemoveIds(
                           allMarked
                             ? new Set()
-                            : new Set(
-                                sortedPlayers.map((player) => player.id),
-                              ),
+                            : new Set(sortedPlayers.map((player) => player.id)),
                         );
                       } else {
                         const allSelected = sortedPlayers.every((player) =>
@@ -1668,9 +1706,7 @@ function PlayTab({
                         setSelected(
                           allSelected
                             ? new Set()
-                            : new Set(
-                                sortedPlayers.map((player) => player.id),
-                              ),
+                            : new Set(sortedPlayers.map((player) => player.id)),
                         );
                       }
                     }}
@@ -1775,7 +1811,10 @@ function PlayTab({
               <h2>
                 Game {clampGameIndex(gameIndex) + 1} of {GAMES_PER_SESSION}
               </h2>
-              <p>Team totals update as you enter scores. Winner locks in when everyone has a number.</p>
+              <p>
+                Team totals update as you enter scores. Winner locks in when
+                everyone has a number.
+              </p>
             </div>
             <div className="actions">
               <button
@@ -1905,20 +1944,19 @@ function PlayTab({
                 !gameResult.winnerName &&
                 (line?.total ?? 0) ===
                   Math.max(...gameResult.teams.map((entry) => entry.total));
-              const placeBadge =
-                line?.won
+              const placeBadge = line?.won
+                ? gameResult.margin != null
+                  ? `WIN +${gameResult.margin}`
+                  : "WIN"
+                : lost
                   ? gameResult.margin != null
-                    ? `WIN +${gameResult.margin}`
-                    : "WIN"
-                  : lost
-                    ? gameResult.margin != null
-                      ? `LOSS -${gameResult.margin}`
-                      : "LOSS"
-                    : tiedLead
-                      ? "TIE"
-                      : line?.place != null
-                        ? `#${line.place}`
-                        : null;
+                    ? `LOSS -${gameResult.margin}`
+                    : "LOSS"
+                  : tiedLead
+                    ? "TIE"
+                    : line?.place != null
+                      ? `#${line.place}`
+                      : null;
               return (
                 <div
                   className={`card team-card ${line?.won ? "team-win" : ""} ${lost ? "team-loss" : ""}`}
@@ -1979,7 +2017,9 @@ function PlayTab({
                     </div>
                     {team.players.length === 0 ? (
                       <div className="scoreboard-row single">
-                        <span className="muted">No players yet — use + Add</span>
+                        <span className="muted">
+                          No players yet — use + Add
+                        </span>
                       </div>
                     ) : null}
                     {team.players.map((player) => {
@@ -2176,11 +2216,43 @@ function PlayTab({
             })}
           </div>
 
+          {lastGamePrize ? (
+            <div className="card" style={{ marginTop: 16 }}>
+              <h3>Game 3 average-beater · $5 each</h3>
+              <p className="muted" style={{ marginTop: 4 }}>
+                ${lastGamePrize.contribution} collected · $
+                {lastGamePrize.payout} tickets · ${lastGamePrize.clubPotAdded}{" "}
+                added to Club pot
+              </p>
+              {lastGamePrize.winners.length ? (
+                <div className="player-stats-list" style={{ marginTop: 12 }}>
+                  {lastGamePrize.winners.map((winner) => (
+                    <div className="player-stat-row" key={winner.playerId}>
+                      <div className="player-stat-top">
+                        <span>
+                          <strong>{winner.name}</strong>
+                          <small className="muted">
+                            {` ${winner.score} · ${winner.improvement >= 0 ? "+" : ""}${winner.improvement} vs avg ${winner.usedAverage}`}
+                          </small>
+                        </span>
+                        <strong className="due-pill">Ticket · $5</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ marginTop: 12 }}>
+                  No ticket with fewer than 5 players.
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Scratch tickets · $10 each</h3>
             <p className="muted" style={{ marginTop: 4 }}>
-              Best of 3: 2 wins gets a $10 ticket. Late join with 2 wins
-              counts. Scratch members are set in Club.
+              Best of 3: 2 wins gets a $10 ticket. Late join with 2 wins counts.
+              Scratch members are set in Club.
             </p>
             {scratchWinners.length ? (
               <div className="player-stats-list" style={{ marginTop: 12 }}>
@@ -2237,7 +2309,9 @@ function PlayTab({
             onClick={(event) => event.stopPropagation()}
           >
             <div className="dialog-head">
-              <h3>{generateReshuffle ? "Shuffle teams?" : "Generate teams?"}</h3>
+              <h3>
+                {generateReshuffle ? "Shuffle teams?" : "Generate teams?"}
+              </h3>
               <button
                 className="icon-button"
                 onClick={() => {
@@ -2249,19 +2323,19 @@ function PlayTab({
               </button>
             </div>
             <p style={{ marginTop: 8, fontSize: 18, fontWeight: 650 }}>
-              {generateReshuffle
-                ? `${currentNightPlayers.length} on the lanes`
-                : (
-                  <>
-                    {selected.size} checked in
-                    {attendees.length !== selected.size ? (
-                      <span className="muted" style={{ fontWeight: 500 }}>
-                        {" "}
-                        · {attendees.length} ready (have average)
-                      </span>
-                    ) : null}
-                  </>
-                )}
+              {generateReshuffle ? (
+                `${currentNightPlayers.length} on the lanes`
+              ) : (
+                <>
+                  {selected.size} checked in
+                  {attendees.length !== selected.size ? (
+                    <span className="muted" style={{ fontWeight: 500 }}>
+                      {" "}
+                      · {attendees.length} ready (have average)
+                    </span>
+                  ) : null}
+                </>
+              )}
             </p>
             <p className="muted">
               {teamCount} teams ·{" "}
@@ -2272,8 +2346,8 @@ function PlayTab({
                   : "Game 1"}
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
-              Balance: avg 150+ / under 150 pools, then shuffle. Random: full
-              shuffle.
+              Balance: avg 150+ / under 150 pools. Random: full shuffle. Manual:
+              start with empty teams and place each player.
             </p>
             <div className="actions" style={{ marginTop: 16 }}>
               <button
@@ -2340,6 +2414,15 @@ function PlayTab({
               >
                 Random
               </button>
+              {!generateReshuffle && !generateFromReset ? (
+                <button
+                  className="button secondary"
+                  disabled={busy || participants.length < teamCount}
+                  onClick={startManualTeams}
+                >
+                  Manual
+                </button>
+              ) : null}
               <button
                 className="button secondary"
                 onClick={() => {
@@ -2531,9 +2614,7 @@ function formatScratchMoney(amount: number, signed = false) {
 
 function isDefaultOutNote(note: string) {
   return (
-    !note ||
-    note.startsWith("Paid out $") ||
-    note.startsWith("Scratch ticket")
+    !note || note.startsWith("Paid out $") || note.startsWith("Scratch ticket")
   );
 }
 
@@ -2713,7 +2794,10 @@ function ClubTab({
   );
   const paidOut = groupMoneyEntries(
     (data?.entries ?? []).filter(
-      (entry) => entry.kind === "ticket" || entry.kind === "payout",
+      (entry) =>
+        entry.kind === "ticket" ||
+        entry.kind === "last_game_ticket" ||
+        entry.kind === "payout",
     ),
   );
   const ledgerDays = groupLedgerDays(data?.entries ?? []);
@@ -2836,7 +2920,7 @@ function ClubTab({
                 ? selectedPayouts.length
                   ? selectedPayouts.map((player) => player.name).join(" · ")
                   : "Check who received money, then save."
-                : "$10 scratch tickets and money you recorded."}
+                : "$10 team tickets, $5 Game 3 tickets, and money you recorded."}
             </p>
           </div>
           <button
@@ -3039,12 +3123,11 @@ function HistoryTab({
   const [sessions, setSessions] = useState<SavedSession[]>([]);
   const [stats, setStats] = useState<PlayerStat[]>([]);
   const [statsSort, setStatsSort] = useState<{
-    key: "name" | "games" | "winRate" | "monday" | "used" | "scratch";
+    key: "name" | "games" | "winRate" | "monday" | "used" | "handicap";
     dir: "asc" | "desc";
   }>({ key: "winRate", dir: "desc" });
   const [openId, setOpenId] = useState<number>();
   const [editingId, setEditingId] = useState<number>();
-  const [editDate, setEditDate] = useState("");
   const [editScores, setEditScores] = useState<ScoreMap>({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -3083,8 +3166,7 @@ function HistoryTab({
         );
       }
       if (key === "games") return (a.gamesPlayed - b.gamesPlayed) * sign;
-      if (key === "scratch")
-        return (a.scratchTickets - b.scratchTickets) * sign;
+      if (key === "handicap") return cmpNullLast(a.handicap, b.handicap);
       if (key === "winRate") return cmpNullLast(a.winRate, b.winRate);
       if (key === "monday")
         return cmpNullLast(a.mondayAverage, b.mondayAverage);
@@ -3094,7 +3176,7 @@ function HistoryTab({
   }, [stats, statsSort]);
 
   const toggleStatsSort = (
-    key: "name" | "games" | "winRate" | "monday" | "used" | "scratch",
+    key: "name" | "games" | "winRate" | "monday" | "used" | "handicap",
   ) => {
     setStatsSort((prev) =>
       prev.key === key
@@ -3104,7 +3186,7 @@ function HistoryTab({
   };
 
   const sortMark = (
-    key: "name" | "games" | "winRate" | "monday" | "used" | "scratch",
+    key: "name" | "games" | "winRate" | "monday" | "used" | "handicap",
   ) => {
     if (statsSort.key !== key) return "";
     return statsSort.dir === "asc" ? " ↑" : " ↓";
@@ -3113,7 +3195,9 @@ function HistoryTab({
   const clubIds = useMemo(
     () =>
       new Set(
-        stats.filter((player) => player.scratchPool).map((player) => String(player.id)),
+        stats
+          .filter((player) => player.scratchPool)
+          .map((player) => String(player.id)),
       ),
     [stats],
   );
@@ -3121,17 +3205,10 @@ function HistoryTab({
   const startEdit = (session: SavedSession) => {
     setEditingId(session.id);
     setOpenId(session.id);
-    setEditDate(session.sessionDate);
-    setEditScores(
-      structuredClone(session.scores ?? {}) as ScoreMap,
-    );
+    setEditScores(structuredClone(session.scores ?? {}) as ScoreMap);
   };
 
-  const setEditScore = (
-    playerId: string,
-    gameIndex: number,
-    value: string,
-  ) => {
+  const setEditScore = (playerId: string, gameIndex: number, value: string) => {
     setEditScores((prev) => {
       const current = [...(prev[playerId] ?? [null, null, null])] as [
         number | null,
@@ -3153,11 +3230,13 @@ function HistoryTab({
         sessionDate: string;
         scores: ScoreMap;
         results: SessionTeamResult[];
+        scratchWinners: ScratchWinner[];
+        lastGamePrize: LastGamePrize;
         finalTeams: SavedSession["finalTeams"];
       }>(`/api/sessions/${sessionId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionDate: editDate, scores: editScores }),
+        body: JSON.stringify({ scores: editScores }),
       });
       setSessions((prev) =>
         prev.map((session) =>
@@ -3167,6 +3246,8 @@ function HistoryTab({
                 sessionDate: updated.sessionDate,
                 scores: updated.scores,
                 results: updated.results,
+                scratchWinners: updated.scratchWinners,
+                lastGamePrize: updated.lastGamePrize,
               }
             : session,
         ),
@@ -3212,7 +3293,9 @@ function HistoryTab({
       <div className="page-title">
         <div>
           <h2>History</h2>
-          <p>Game wins/losses, scratch tickets, averages, and weekly sessions.</p>
+          <p>
+            Game wins/losses, scratch tickets, averages, and weekly sessions.
+          </p>
         </div>
       </div>
       {error && <div className="notice error">{error}</div>}
@@ -3246,10 +3329,10 @@ function HistoryTab({
                 <th>
                   <button
                     type="button"
-                    className={`sort-th ${statsSort.key === "scratch" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("scratch")}
+                    className={`sort-th ${statsSort.key === "handicap" ? "active" : ""}`}
+                    onClick={() => toggleStatsSort("handicap")}
                   >
-                    Scratch{sortMark("scratch")}
+                    Handicap{sortMark("handicap")}
                   </button>
                 </th>
                 <th>
@@ -3297,7 +3380,7 @@ function HistoryTab({
                     {player.ties ? `-${player.ties}` : ""}
                   </td>
                   <td>{player.gamesPlayed}</td>
-                  <td>{player.scratchTickets}</td>
+                  <td>{fmt(player.handicap)}</td>
                   <td>
                     {player.winRate == null
                       ? "—"
@@ -3332,15 +3415,11 @@ function HistoryTab({
                   <button
                     type="button"
                     className="session-main"
-                    onClick={() =>
-                      setOpenId(open ? undefined : session.id)
-                    }
+                    onClick={() => setOpenId(open ? undefined : session.id)}
                   >
                     <div className="session-title-line">
                       <strong>{session.sessionDate}</strong>
-                      <span className="badge">
-                        {checkedIn} checked in
-                      </span>
+                      <span className="badge">{checkedIn} checked in</span>
                     </div>
                     <span className="session-meta">
                       {session.teamCount} teams
@@ -3377,16 +3456,6 @@ function HistoryTab({
                 </div>
                 {open && (
                   <div className="history-detail">
-                    {isEditing && (
-                      <label className="field" style={{ maxWidth: 220, marginBottom: 12 }}>
-                        Date
-                        <input
-                          type="date"
-                          value={editDate}
-                          onChange={(event) => setEditDate(event.target.value)}
-                        />
-                      </label>
-                    )}
                     <div className="team-grid">
                       {session.finalTeams.map((team) => {
                         const teamResult = session.results?.find(
@@ -3426,12 +3495,12 @@ function HistoryTab({
                             </div>
                             {team.players.map((player) => {
                               const games = isEditing
-                                ? editScores[player.id] ?? [null, null, null]
-                                : session.scores?.[player.id] ?? [
+                                ? (editScores[player.id] ?? [null, null, null])
+                                : (session.scores?.[player.id] ?? [
                                     null,
                                     null,
                                     null,
-                                  ];
+                                  ]);
                               return (
                                 <div className="player-chip" key={player.id}>
                                   <div className="top">
@@ -3489,8 +3558,7 @@ function HistoryTab({
                             {teamResult && (
                               <div className="team-totals">
                                 <span>
-                                  Final{" "}
-                                  <strong>{teamResult.finalTotal}</strong>
+                                  Final <strong>{teamResult.finalTotal}</strong>
                                 </span>
                                 <span>
                                   HDC{" "}
@@ -3518,6 +3586,20 @@ function HistoryTab({
                             {` (${winner.wins}W)`}
                           </span>
                         ))}
+                      </p>
+                    ) : null}
+                    {session.lastGamePrize?.winners.length ? (
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        Game 3 $5 tickets:{" "}
+                        {session.lastGamePrize.winners.map((winner, index) => (
+                          <span key={`${winner.playerId}-${index}`}>
+                            {index ? " · " : null}
+                            {winner.name} ({winner.score},{" "}
+                            {winner.improvement >= 0 ? "+" : ""}
+                            {winner.improvement} vs avg)
+                          </span>
+                        ))}
+                        {` · $${session.lastGamePrize.clubPotAdded} to Club pot`}
                       </p>
                     ) : null}
                     {isEditing && (

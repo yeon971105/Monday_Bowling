@@ -25,9 +25,14 @@ import {
 } from "@/lib/league-sync";
 import { parseBlsText } from "@/lib/pdf-parser";
 import {
+  buildStoredGameResults,
+  computeLastGamePrize,
+  computeScratchWinners,
   computeSeriesResults,
   GAMES_PER_SESSION,
+  LAST_GAME_INDEX,
   toSessionTeamResults,
+  type MoneyTeam,
   type TeamForScoring,
 } from "@/lib/scoring";
 import {
@@ -39,6 +44,8 @@ import {
 import {
   deleteScratchPayout,
   getScratchMoney,
+  pacificYmd,
+  recordLastGamePrize,
   recordScratchPayouts,
   recordScratchTickets,
   removeScratchTicketsForSession,
@@ -151,8 +158,7 @@ async function syncLeagueFromReport() {
       "SELECT id, status, week_number weekNumber FROM imports WHERE source_filename = ? ORDER BY id DESC LIMIT 1",
     )
     .get(sheet.filename) as
-    | { id: number; status: string; weekNumber: number | null }
-    | undefined;
+    { id: number; status: string; weekNumber: number | null } | undefined;
 
   if (existing?.status === "APPLIED") {
     const stored = JSON.parse(
@@ -182,7 +188,10 @@ async function syncLeagueFromReport() {
       after,
       applied,
       {
-        skipped: applied.updated === 0 && applied.created === 0 && history.updated === 0,
+        skipped:
+          applied.updated === 0 &&
+          applied.created === 0 &&
+          history.updated === 0,
         reason:
           applied.updated === 0 && history.updated === 0
             ? "already_applied"
@@ -397,6 +406,7 @@ export async function GET(_request: NextRequest, context: Context) {
                 attendees_json attendees, scores_json scores, results_json results,
                 game_rosters_json gameRosters, game_results_json gameResults,
                 lottery_ids_json lotteryIds, scratch_winners_json scratchWinners,
+                last_game_prize_json lastGamePrize,
                 game_count gameCount, created_at createdAt
                FROM sessions ORDER BY session_date DESC, id DESC`,
             )
@@ -418,6 +428,9 @@ export async function GET(_request: NextRequest, context: Context) {
               scratchWinners: r.scratchWinners
                 ? JSON.parse(r.scratchWinners)
                 : [],
+              lastGamePrize: r.lastGamePrize
+                ? JSON.parse(r.lastGamePrize)
+                : null,
               gameCount: r.gameCount ?? GAMES_PER_SESSION,
               createdAt: r.createdAt,
             })),
@@ -495,7 +508,11 @@ export async function POST(request: NextRequest, context: Context) {
         throw new Error("MANUAL players need a manual average");
       if (mode === "FIXED" && fixed === null)
         throw new Error("FIXED players need a locked average");
-      if (mode === "AUTO" && league === null && !String(body.leagueName ?? "").trim())
+      if (
+        mode === "AUTO" &&
+        league === null &&
+        !String(body.leagueName ?? "").trim()
+      )
         throw new Error(
           "AUTO players need a league average, or a PDF/league name so Sync can fill it",
         );
@@ -533,25 +550,33 @@ export async function POST(request: NextRequest, context: Context) {
         )
         .get() as { id: number; parsed_json: string } | undefined;
       if (!record)
-        throw new Error("Sync a league sheet first, then add from the league list");
+        throw new Error(
+          "Sync a league sheet first, then add from the league list",
+        );
       const stored = JSON.parse(record.parsed_json) as ImportReview;
       const row = (stored.players ?? []).find(
         (player) =>
           normalizeName(player.printedName) === normalizeName(printedName),
       );
-      if (!row) throw new Error(`${printedName} was not found on the last synced sheet`);
+      if (!row)
+        throw new Error(
+          `${printedName} was not found on the last synced sheet`,
+        );
       if (row.currentAverage === null)
         throw new Error(`${printedName} has no average on the league sheet`);
       const existing = listPlayers(true).find(
         (player) =>
           normalizeName(player.displayName) === normalizeName(printedName) ||
-          normalizeName(player.leagueName ?? "") === normalizeName(printedName) ||
+          normalizeName(player.leagueName ?? "") ===
+            normalizeName(printedName) ||
           player.aliases.some(
             (alias) => normalizeName(alias) === normalizeName(printedName),
           ),
       );
       if (existing)
-        throw new Error(`${existing.displayName} is already on the Monday roster`);
+        throw new Error(
+          `${existing.displayName} is already on the Monday roster`,
+        );
       const created = db
         .prepare(
           `INSERT INTO players(display_name, league_name, average_mode, league_average, pdf_handicap, games, pins, team_number, team_name, last_import_id) VALUES (?,?, 'AUTO', ?,?,?,?,?,?,?)`,
@@ -569,7 +594,10 @@ export async function POST(request: NextRequest, context: Context) {
         );
       const id = Number(created.lastInsertRowid);
       addAverageHistory(id, "PDF_IMPORT", record.id, db);
-      return json(listPlayers(true).find((player) => player.id === id), 201);
+      return json(
+        listPlayers(true).find((player) => player.id === id),
+        201,
+      );
     }
     if (s[0] === "settings") {
       const body = assertSettings(await request.json());
@@ -671,10 +699,9 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (s[0] === "sessions") {
       const body = await request.json();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(body.sessionDate))
-        throw new Error("A valid session date is required");
       if (!Array.isArray(body.teams) || body.teams.length < 2)
         throw new Error("Generated teams are required");
+      const sessionDate = pacificYmd();
       const activeIds = (
         db
           .prepare("SELECT id FROM players WHERE active=1 AND archived=0")
@@ -685,6 +712,14 @@ export async function POST(request: NextRequest, context: Context) {
         .map((p: any) => Number(p.id));
       const absent = activeIds.filter((id) => !attendeeIds.includes(id));
       const gameCount = Number(body.gameCount ?? GAMES_PER_SESSION);
+      const lastGameTeams =
+        gameCount >= GAMES_PER_SESSION
+          ? (body.gameRosters?.[LAST_GAME_INDEX] ?? body.teams)
+          : [];
+      const lastGamePrize = computeLastGamePrize({
+        players: lastGameTeams.flatMap((team: any) => team.players ?? []),
+        scores: body.scores ?? {},
+      });
       const result = db
         .prepare(
           `INSERT INTO sessions(
@@ -692,11 +727,11 @@ export async function POST(request: NextRequest, context: Context) {
             handicap_settings_json,attendees_json,absent_ids_json,
             generated_teams_json,final_teams_json,fairness_json,
             scores_json,results_json,game_rosters_json,game_results_json,
-            lottery_ids_json,scratch_winners_json,game_count
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            lottery_ids_json,scratch_winners_json,last_game_prize_json,game_count
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
-          body.sessionDate,
+          sessionDate,
           body.mode,
           body.teams.length,
           body.targetTeamSize ?? 3,
@@ -713,17 +748,22 @@ export async function POST(request: NextRequest, context: Context) {
           JSON.stringify(body.gameResults ?? null),
           JSON.stringify(body.lotteryIds ?? []),
           JSON.stringify(body.scratchWinners ?? []),
+          JSON.stringify(lastGamePrize),
           gameCount,
         );
+      const sessionId = Number(result.lastInsertRowid);
       recordScratchTickets({
-        sessionId: Number(result.lastInsertRowid),
-        sessionDate: body.sessionDate,
+        sessionId,
+        sessionDate,
         winners: body.scratchWinners ?? [],
       });
+      recordLastGamePrize({ sessionId, sessionDate, prize: lastGamePrize });
       const manualUpdated = refreshManualAveragesFromHistory(db);
       return json(
         {
-          id: Number(result.lastInsertRowid),
+          id: sessionId,
+          sessionDate,
+          lastGamePrize,
           manualAveragesUpdated: manualUpdated.updated,
           historyUnlocked: manualUpdated.unlocked,
         },
@@ -774,7 +814,11 @@ export async function POST(request: NextRequest, context: Context) {
           const placeholders = keys.map(() => "?").join(",");
           const values = keys.map((key) => {
             const value = row[key];
-            if (key.endsWith("_json") && value !== null && typeof value !== "string")
+            if (
+              key.endsWith("_json") &&
+              value !== null &&
+              typeof value !== "string"
+            )
               return JSON.stringify(value);
             if (
               key === "source_blob" &&
@@ -809,13 +853,11 @@ export async function PUT(request: NextRequest, context: Context) {
         .get(id) as any;
       if (!existing) return fail("Session not found", 404);
       const body = await request.json();
-      const sessionDate = body.sessionDate ?? existing.session_date;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate))
-        throw new Error("A valid session date is required");
+      const sessionDate = existing.session_date;
       const scores = body.scores ?? parseSessionScores(existing.scores_json);
       const teams = JSON.parse(existing.final_teams_json) as Array<{
         name: string;
-        players: Array<{ id: string; usedAverage: number }>;
+        players: Array<{ id: string; name: string; usedAverage: number }>;
       }>;
       const scoringTeams: TeamForScoring[] = teams.map((team) => ({
         name: team.name,
@@ -831,20 +873,92 @@ export async function PUT(request: NextRequest, context: Context) {
         gameCount: existing.game_count ?? GAMES_PER_SESSION,
       });
       const results = toSessionTeamResults(series);
+      const storedRosters = existing.game_rosters_json
+        ? (JSON.parse(existing.game_rosters_json) as Array<Array<{
+            name: string;
+            players: Array<{ id: string; name: string; usedAverage: number }>;
+          }> | null>)
+        : [];
+      const fallbackRosters = Array.from(
+        { length: existing.game_count ?? GAMES_PER_SESSION },
+        () => teams,
+      );
+      const rosters = storedRosters.length ? storedRosters : fallbackRosters;
+      const moneyTeamsByGame: Array<MoneyTeam[] | null> = rosters.map((rows) =>
+        rows
+          ? rows.map((team) => ({
+              name: team.name,
+              averageSum: team.players.reduce(
+                (sum, player) => sum + (player.usedAverage ?? 0),
+                0,
+              ),
+              players: team.players.map((player) => ({
+                id: String(player.id),
+                name: player.name,
+              })),
+            }))
+          : null,
+      );
+      const gameResults = buildStoredGameResults({
+        teamsByGame: moneyTeamsByGame,
+        scores,
+        gameCount: existing.game_count ?? GAMES_PER_SESSION,
+      });
+      const nightPlayers = Array.from(
+        new Map(
+          rosters.flatMap((rows) =>
+            (rows ?? []).flatMap((team) =>
+              team.players.map((player) => [
+                String(player.id),
+                { id: String(player.id), name: player.name },
+              ]),
+            ),
+          ),
+        ).values(),
+      );
+      const lotteryIds = existing.lottery_ids_json
+        ? JSON.parse(existing.lottery_ids_json)
+        : [];
+      const scratchWinners = computeScratchWinners({
+        games: gameResults,
+        players: nightPlayers,
+        lotteryIds,
+      });
+      const lastRoster =
+        (existing.game_count ?? GAMES_PER_SESSION) >= GAMES_PER_SESSION
+          ? (rosters[LAST_GAME_INDEX] ?? teams)
+          : [];
+      const lastGamePrize = computeLastGamePrize({
+        players: lastRoster.flatMap((team) => team.players),
+        scores,
+      });
       db.prepare(
-        `UPDATE sessions SET session_date=?, scores_json=?, results_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+        `UPDATE sessions SET scores_json=?, results_json=?, game_results_json=?,
+          scratch_winners_json=?, last_game_prize_json=?, updated_at=CURRENT_TIMESTAMP
+         WHERE id=?`,
       ).run(
-        sessionDate,
         JSON.stringify(scores),
         JSON.stringify(results),
+        JSON.stringify(gameResults),
+        JSON.stringify(scratchWinners),
+        JSON.stringify(lastGamePrize),
         id,
       );
+      removeScratchTicketsForSession(id);
+      recordScratchTickets({
+        sessionId: id,
+        sessionDate,
+        winners: scratchWinners,
+      });
+      recordLastGamePrize({ sessionId: id, sessionDate, prize: lastGamePrize });
       refreshManualAveragesFromHistory(db);
       return json({
         id,
         sessionDate,
         scores,
         results,
+        scratchWinners,
+        lastGamePrize,
         finalTeams: teams,
       });
     }
@@ -908,6 +1022,7 @@ export async function PUT(request: NextRequest, context: Context) {
           ).run(id, String(alias).trim());
     }
     addAverageHistory(id, "MANUAL_EDIT");
+    refreshManualAveragesFromHistory(db);
     const row = db.prepare("SELECT * FROM players WHERE id=?").get(id) as any;
     return json(rowToPlayer(row));
   } catch (error) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampGameIndex,
   computeGameResult,
+  computeLastGamePrize,
   computeLiveStandings,
   computeMoneySettlement,
   computeScratchWinners,
@@ -237,7 +238,9 @@ describe("scoring", () => {
       },
     });
     expect(result.complete).toBe(true);
-    expect(result.teams.find((team) => team.teamName === "Team 2")).toMatchObject({
+    expect(
+      result.teams.find((team) => team.teamName === "Team 2"),
+    ).toMatchObject({
       total: 235,
       won: true,
     });
@@ -246,6 +249,32 @@ describe("scoring", () => {
   it("computes monday average from recorded games", () => {
     expect(mondayAverageFromScores([120, 140, null, 160])).toBe(140);
     expect(mondayAverageFromScores([null, null])).toBeNull();
+  });
+
+  it("awards one $5 Game 3 ticket per five players and sends the remainder to the pot", () => {
+    const players = Array.from({ length: 12 }, (_, index) => ({
+      id: String(index + 1),
+      name: `Player ${index + 1}`,
+      usedAverage: 150,
+    }));
+    const scores = Object.fromEntries(
+      players.map((player, index) => [
+        player.id,
+        [null, null, 150 + index] as [null, null, number],
+      ]),
+    );
+    const prize = computeLastGamePrize({ players, scores });
+    expect(prize).toMatchObject({
+      participantCount: 12,
+      contribution: 12,
+      ticketCount: 2,
+      payout: 10,
+      clubPotAdded: 2,
+    });
+    expect(prize.winners.map((winner) => winner.name)).toEqual([
+      "Player 12",
+      "Player 11",
+    ]);
   });
 
   it("builds series totals with per-game handicap", () => {

@@ -214,10 +214,8 @@ export function computeGameResult(input: {
   const best = ranked[0]?.total ?? 0;
   const second = ranked[1]?.total ?? best;
   const worst = ranked[ranked.length - 1]?.total ?? 0;
-  const soleFirst =
-    ranked.filter((line) => line.total === best).length === 1;
-  const soleLast =
-    ranked.filter((line) => line.total === worst).length === 1;
+  const soleFirst = ranked.filter((line) => line.total === best).length === 1;
+  const soleLast = ranked.filter((line) => line.total === worst).length === 1;
 
   const teams = lines.map((line) => ({
     ...line,
@@ -281,7 +279,8 @@ export function computeSeriesResults(input: {
   const allGamesDone = games.every((game) => game.complete);
   if (allGamesDone) {
     const ranked = [...results].sort(
-      (a, b) => b.finalTotal - a.finalTotal || a.teamName.localeCompare(b.teamName),
+      (a, b) =>
+        b.finalTotal - a.finalTotal || a.teamName.localeCompare(b.teamName),
     );
     ranked.forEach((line, index) => {
       const target = results.find((entry) => entry.teamName === line.teamName);
@@ -289,7 +288,9 @@ export function computeSeriesResults(input: {
     });
     const best = ranked[0]?.finalTotal ?? 0;
     if (ranked.filter((line) => line.finalTotal === best).length === 1) {
-      const winner = results.find((entry) => entry.teamName === ranked[0].teamName);
+      const winner = results.find(
+        (entry) => entry.teamName === ranked[0].teamName,
+      );
       if (winner) winner.won = true;
     }
   }
@@ -298,9 +299,7 @@ export function computeSeriesResults(input: {
 }
 
 /** Convert series results into the shape History already stores. */
-export function toSessionTeamResults(
-  series: TeamSeriesResult[],
-): Array<{
+export function toSessionTeamResults(series: TeamSeriesResult[]): Array<{
   teamName: string;
   gameTotals: number[];
   scratchTotal: number;
@@ -404,6 +403,73 @@ export type ScratchWinner = {
   name: string;
   wins: number;
 };
+
+export const LAST_GAME_ENTRY_DOLLARS = 1;
+export const LAST_GAME_TICKET_DOLLARS = 5;
+
+export type LastGamePrizeWinner = {
+  playerId: string;
+  name: string;
+  score: number;
+  usedAverage: number;
+  improvement: number;
+};
+
+export type LastGamePrize = {
+  participantCount: number;
+  contribution: number;
+  ticketCount: number;
+  payout: number;
+  clubPotAdded: number;
+  winners: LastGamePrizeWinner[];
+};
+
+/** One $5 ticket per five bowlers, ranked by Game 3 score minus used average. */
+export function computeLastGamePrize(input: {
+  players: Array<{
+    id: string | number;
+    name: string;
+    usedAverage: number;
+  }>;
+  scores: ScoreMap;
+}): LastGamePrize {
+  const players = [
+    ...new Map(
+      input.players.map((player) => [String(player.id), player]),
+    ).values(),
+  ];
+  const ticketCount = Math.floor(players.length / 5);
+  const ranked = players
+    .map((player) => {
+      const score = input.scores[String(player.id)]?.[LAST_GAME_INDEX];
+      if (typeof score !== "number" || !Number.isFinite(score)) return null;
+      return {
+        playerId: String(player.id),
+        name: player.name,
+        score,
+        usedAverage: player.usedAverage,
+        improvement: score - player.usedAverage,
+      };
+    })
+    .filter((player): player is LastGamePrizeWinner => player !== null)
+    .sort(
+      (a, b) =>
+        b.improvement - a.improvement ||
+        b.score - a.score ||
+        a.name.localeCompare(b.name),
+    );
+  const winners = ranked.slice(0, ticketCount);
+  const contribution = players.length * LAST_GAME_ENTRY_DOLLARS;
+  const payout = winners.length * LAST_GAME_TICKET_DOLLARS;
+  return {
+    participantCount: players.length,
+    contribution,
+    ticketCount: winners.length,
+    payout,
+    clubPotAdded: contribution - payout,
+    winners,
+  };
+}
 
 export function gameWinCounts(games: StoredGameResult[]): Map<string, number> {
   const wins = new Map<string, number>();

@@ -164,7 +164,8 @@ describe("session save updates MANUAL monday averages", () => {
     );
     const { players } = await playersResponse.json();
     const updated = players.find(
-      (player: { displayName: string }) => player.displayName === "Guest Bowler",
+      (player: { displayName: string }) =>
+        player.displayName === "Guest Bowler",
     );
     expect(updated).toMatchObject({
       averageMode: "MANUAL",
@@ -178,13 +179,126 @@ describe("session save updates MANUAL monday averages", () => {
     );
     const { players: stats } = await statsResponse.json();
     const guestStats = stats.find(
-      (player: { displayName: string }) => player.displayName === "Guest Bowler",
+      (player: { displayName: string }) =>
+        player.displayName === "Guest Bowler",
     );
     expect(guestStats).toMatchObject({
       mondayAverage: 190,
       wins: 0,
       losses: 9,
       sessions: 3,
+    });
+  });
+
+  it("unlocks a fixed average and uses Monday average after 10 games", async () => {
+    const create = await POST(
+      new NextRequest("http://localhost/api/players", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "Locked Bowler",
+          averageMode: "FIXED",
+          fixedAverage: 120,
+        }),
+      }),
+      routeContext(["players"]),
+    );
+    const player = await create.json();
+    const teams = [
+      {
+        name: "Team 1",
+        players: [
+          {
+            id: String(player.id),
+            name: player.displayName,
+            usedAverage: 120,
+            averageMode: "FIXED",
+            handicap: 90,
+            projectedScore: 210,
+          },
+        ],
+        metrics: {
+          scratchTotal: 120,
+          handicapTotal: 90,
+          projectedTotal: 210,
+          scratchPerPlayer: 120,
+          projectedPerPlayer: 210,
+          tierCounts: { A: 1, B: 0, C: 0, D: 0 },
+        },
+      },
+      {
+        name: "Team 2",
+        players: [
+          {
+            id: "locked-opponent",
+            name: "Opponent",
+            usedAverage: 150,
+            averageMode: "MANUAL",
+            handicap: 63,
+            projectedScore: 213,
+          },
+        ],
+        metrics: {
+          scratchTotal: 150,
+          handicapTotal: 63,
+          projectedTotal: 213,
+          scratchPerPlayer: 150,
+          projectedPerPlayer: 213,
+          tierCounts: { A: 0, B: 1, C: 0, D: 0 },
+        },
+      },
+    ];
+    for (let night = 0; night < 4; night += 1) {
+      const save = await POST(
+        new NextRequest("http://localhost/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "BALANCED",
+            targetTeamSize: 1,
+            seed: `locked-${night}`,
+            attendees: teams.flatMap((team) => team.players),
+            teams,
+            gameRosters: [teams, teams, teams],
+            scores: {
+              [String(player.id)]: [180, 180, 180],
+              "locked-opponent": [150, 150, 150],
+            },
+            results: [],
+            lotteryIds: [],
+            scratchWinners: [],
+            gameCount: 3,
+          }),
+        }),
+        routeContext(["sessions"]),
+      );
+      expect(save.ok).toBe(true);
+    }
+    const playersResponse = await GET(
+      new NextRequest("http://localhost/api/players"),
+      routeContext(["players"]),
+    );
+    const { players } = await playersResponse.json();
+    expect(
+      players.find((row: { id: number }) => row.id === player.id),
+    ).toMatchObject({
+      averageMode: "MANUAL",
+      fixedAverage: null,
+      manualAverage: 180,
+      usedAverage: 180,
+    });
+    const statsResponse = await GET(
+      new NextRequest("http://localhost/api/stats"),
+      routeContext(["stats"]),
+    );
+    const { players: stats } = await statsResponse.json();
+    expect(
+      stats.find((row: { id: number }) => row.id === player.id),
+    ).toMatchObject({
+      gamesPlayed: 12,
+      mondayAverage: 180,
+      handicapAverage: 180,
+      handicap: 36,
     });
   });
 });

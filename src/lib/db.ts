@@ -128,6 +128,7 @@ export function getDb(): SqliteDb {
   }
   database.exec(SCHEMA);
   migrateSessionColumns(database);
+  migrateSessionDates(database);
   migrateScratchMoney(database);
   const insert = database.prepare(
     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
@@ -153,6 +154,28 @@ function migrateSessionColumns(db: SqliteDb): void {
   add("game_results_json", "TEXT");
   add("lottery_ids_json", "TEXT");
   add("scratch_winners_json", "TEXT");
+  add("last_game_prize_json", "TEXT");
+}
+
+function migrateSessionDates(db: SqliteDb): void {
+  const format = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const rows = db
+    .prepare("SELECT id, session_date, created_at FROM sessions")
+    .all() as Array<{ id: number; session_date: string; created_at: string }>;
+  const update = db.prepare(
+    "UPDATE sessions SET session_date = ? WHERE id = ?",
+  );
+  for (const row of rows) {
+    const created = new Date(`${row.created_at.replace(" ", "T")}Z`);
+    if (Number.isNaN(created.getTime())) continue;
+    const systemDate = format.format(created);
+    if (systemDate !== row.session_date) update.run(systemDate, row.id);
+  }
 }
 
 function migrateScratchMoney(db: SqliteDb): void {
@@ -160,12 +183,14 @@ function migrateScratchMoney(db: SqliteDb): void {
     db.prepare("PRAGMA table_info(players)").all() as Array<{ name: string }>
   ).map((column) => column.name);
   if (!playerColumns.includes("scratch_pool"))
-    db.exec("ALTER TABLE players ADD COLUMN scratch_pool INTEGER NOT NULL DEFAULT 0");
+    db.exec(
+      "ALTER TABLE players ADD COLUMN scratch_pool INTEGER NOT NULL DEFAULT 0",
+    );
   db.exec(`
     CREATE TABLE IF NOT EXISTS scratch_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entry_date TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout')),
+      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket')),
       player_id INTEGER,
       player_name TEXT NOT NULL,
       amount INTEGER NOT NULL,
@@ -178,22 +203,26 @@ function migrateScratchMoney(db: SqliteDb): void {
       ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
     CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
       ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_fee
+      ON scratch_ledger(kind, session_id) WHERE kind = 'last_game_fee';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_tickets
+      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'last_game_ticket';
   `);
-  migrateScratchLedgerPayouts(db);
+  migrateScratchLedgerKinds(db);
 }
 
-function migrateScratchLedgerPayouts(db: SqliteDb): void {
+function migrateScratchLedgerKinds(db: SqliteDb): void {
   const row = db
     .prepare(
       `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scratch_ledger'`,
     )
     .get() as { sql: string } | undefined;
-  if (!row?.sql || row.sql.includes("'payout'")) return;
+  if (!row?.sql || row.sql.includes("'last_game_fee'")) return;
   db.exec(`
-    CREATE TABLE scratch_ledger_payout (
+    CREATE TABLE scratch_ledger_next (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entry_date TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout')),
+      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket')),
       player_id INTEGER,
       player_name TEXT NOT NULL,
       amount INTEGER NOT NULL,
@@ -202,7 +231,7 @@ function migrateScratchLedgerPayouts(db: SqliteDb): void {
       note TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
-    INSERT INTO scratch_ledger_payout(
+    INSERT INTO scratch_ledger_next(
       id, entry_date, kind, player_id, player_name, amount,
       session_id, month_key, note, created_at
     )
@@ -210,11 +239,15 @@ function migrateScratchLedgerPayouts(db: SqliteDb): void {
            session_id, month_key, note, created_at
     FROM scratch_ledger;
     DROP TABLE scratch_ledger;
-    ALTER TABLE scratch_ledger_payout RENAME TO scratch_ledger;
+    ALTER TABLE scratch_ledger_next RENAME TO scratch_ledger;
     CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_dues
       ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
     CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
       ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_fee
+      ON scratch_ledger(kind, session_id) WHERE kind = 'last_game_fee';
+    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_tickets
+      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'last_game_ticket';
   `);
 }
 

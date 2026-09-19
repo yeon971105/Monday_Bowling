@@ -1,4 +1,5 @@
-import { getDb, listPlayers, addAverageHistory } from "./db";
+import { getDb, getSettings, listPlayers, addAverageHistory } from "./db";
+import { calculateHandicap } from "./bowling";
 import {
   gameWinCounts,
   mondayAverageFromScores,
@@ -83,8 +84,7 @@ function tallyFromStoredGames(
     if (!mine) continue;
     played = true;
     if (mine.won) wins += 1;
-    else if (game.winnerName && game.lastName === mine.teamName)
-      losses += 1;
+    else if (game.winnerName && game.lastName === mine.teamName) losses += 1;
     else if (!game.winnerName && mine.place === 1) ties += 1;
   }
   return { wins, losses, ties, played };
@@ -166,6 +166,7 @@ function playerWonScratch(
 export function computePlayerStats(db = getDb()): PlayerStat[] {
   const players = listPlayers(true, db);
   const sessions = listSessionRows(db);
+  const settings = getSettings(db);
   return players
     .filter((player) => !player.archived)
     .map((player) => {
@@ -217,6 +218,8 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
 
       const totalPins = games.reduce((sum, value) => sum + value, 0);
       const mondayAverage = mondayAverageFromScores(games);
+      const handicapAverage =
+        games.length > 10 ? mondayAverage : player.usedAverage;
       const decided = wins + losses;
       return {
         id: player.id,
@@ -233,14 +236,20 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
         scratchTickets,
         scratchPool: Boolean(player.scratchPool),
         usedAverage: player.usedAverage,
+        handicapAverage,
+        handicap:
+          handicapAverage == null
+            ? null
+            : calculateHandicap(handicapAverage, settings),
       };
     });
 }
 
 /** Minimum Monday nights before history average replaces a locked guest average. */
 export const HISTORY_AVG_MIN_SESSIONS = 3;
+export const MONDAY_AVG_MIN_GAMES = 11;
 
-/** Refresh MANUAL averages from Monday history; unlock locked guests after 3 weeks. */
+/** After 10 games, Monday history becomes the used average and any lock is removed. */
 export function refreshManualAveragesFromHistory(db = getDb()): {
   updated: number;
   unlocked: number;
@@ -254,18 +263,24 @@ export function refreshManualAveragesFromHistory(db = getDb()): {
     const player = players.find((entry) => entry.id === stat.id);
     if (!player || player.archived) continue;
 
-    // Guests / no league average: after 3 Monday nights, use history avg and unlock.
+    if (stat.gamesPlayed >= MONDAY_AVG_MIN_GAMES) {
+      const changed =
+        player.averageMode !== "MANUAL" ||
+        player.manualAverage !== stat.mondayAverage ||
+        player.fixedAverage !== null;
+      if (!changed) continue;
+      if (player.averageMode === "FIXED") unlocked += 1;
+      db.prepare(
+        `UPDATE players SET average_mode='MANUAL', manual_average=?, fixed_average=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      ).run(stat.mondayAverage, player.id);
+      addAverageHistory(player.id, "MONDAY_HISTORY_AUTO", undefined, db);
+      updated += 1;
+      continue;
+    }
+
+    // Unlocked guests keep tracking Monday history before the automatic threshold.
     if (player.leagueAverage == null) {
       if (stat.sessions < HISTORY_AVG_MIN_SESSIONS) continue;
-      if (player.averageMode === "FIXED") {
-        db.prepare(
-          `UPDATE players SET average_mode='MANUAL', manual_average=?, fixed_average=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-        ).run(stat.mondayAverage, player.id);
-        addAverageHistory(player.id, "MONDAY_HISTORY_UNLOCK", undefined, db);
-        unlocked += 1;
-        updated += 1;
-        continue;
-      }
       if (player.averageMode === "MANUAL") {
         if (player.manualAverage === stat.mondayAverage) continue;
         db.prepare(

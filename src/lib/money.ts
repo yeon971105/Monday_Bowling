@@ -1,5 +1,9 @@
 import { getDb } from "./db";
-import type { ScratchWinner } from "./scoring";
+import {
+  LAST_GAME_TICKET_DOLLARS,
+  type LastGamePrize,
+  type ScratchWinner,
+} from "./scoring";
 import type {
   ScratchLedgerKind,
   ScratchMoneySnapshot,
@@ -54,7 +58,9 @@ export function duesMonthKeysDue(
 export function nextDuesDate(todayYmd: string): string {
   const monthKey = monthKeyFromYmd(todayYmd);
   const thisMonth = duesDateForMonth(monthKey);
-  return thisMonth > todayYmd ? thisMonth : duesDateForMonth(nextMonthKey(monthKey));
+  return thisMonth > todayYmd
+    ? thisMonth
+    : duesDateForMonth(nextMonthKey(monthKey));
 }
 
 export function formatScratchMoney(amount: number, signed = false): string {
@@ -145,6 +151,43 @@ export function recordScratchTickets(
   }
 }
 
+export function recordLastGamePrize(
+  input: {
+    sessionId: number;
+    sessionDate: string;
+    prize: LastGamePrize;
+  },
+  db = getDb(),
+): void {
+  if (input.prize.contribution <= 0) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO scratch_ledger(
+      entry_date, kind, player_id, player_name, amount, session_id, month_key, note
+    ) VALUES (?, 'last_game_fee', NULL, 'Last game side pot', ?, ?, NULL, ?)`,
+  ).run(
+    input.sessionDate,
+    input.prize.contribution,
+    input.sessionId,
+    `$1 × ${input.prize.participantCount} players · ${formatScratchMoney(input.prize.clubPotAdded)} to club pot`,
+  );
+  const insertTicket = db.prepare(
+    `INSERT OR IGNORE INTO scratch_ledger(
+      entry_date, kind, player_id, player_name, amount, session_id, month_key, note
+    ) VALUES (?, 'last_game_ticket', ?, ?, ?, ?, NULL, ?)`,
+  );
+  for (const winner of input.prize.winners) {
+    const parsed = Number(winner.playerId);
+    insertTicket.run(
+      input.sessionDate,
+      Number.isFinite(parsed) ? parsed : null,
+      winner.name,
+      -LAST_GAME_TICKET_DOLLARS,
+      input.sessionId,
+      `Last game prize · ${winner.score} (${winner.improvement >= 0 ? "+" : ""}${winner.improvement} vs avg)`,
+    );
+  }
+}
+
 function backfillSessionTickets(db: SqliteDb): void {
   const rows = db
     .prepare(
@@ -191,8 +234,7 @@ export function removeScratchTicketsForSession(
        FROM sessions WHERE id = ?`,
     )
     .get(sessionId) as
-    | { sessionDate: string; winnersJson: string | null }
-    | undefined;
+    { sessionDate: string; winnersJson: string | null } | undefined;
   db.prepare("DELETE FROM scratch_ledger WHERE session_id = ?").run(sessionId);
   if (!session) return;
   let winners: ScratchWinner[] = [];

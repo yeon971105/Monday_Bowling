@@ -1,5 +1,6 @@
 export type AverageMode = "AUTO" | "MANUAL" | "FIXED";
-export type BalancingMode = "RANDOM" | "BALANCED" | "BALANCED_REPEATS";
+export type BalancingMode =
+  "RANDOM" | "BALANCED" | "BALANCED_REPEATS" | "MANUAL";
 export type SkillTier = "A" | "B" | "C" | "D";
 
 export interface LeagueSettings {
@@ -106,6 +107,8 @@ export interface PlayerStat {
   scratchTickets: number;
   scratchPool: boolean;
   usedAverage: number | null;
+  handicapAverage: number | null;
+  handicap: number | null;
 }
 
 export interface ParsedPdfPlayer {
@@ -130,7 +133,8 @@ export interface ParsedLeaguePdf {
   errors: string[];
 }
 
-export type ScratchLedgerKind = "dues" | "ticket" | "payout";
+export type ScratchLedgerKind =
+  "dues" | "ticket" | "payout" | "last_game_fee" | "last_game_ticket";
 
 export type ScratchLedgerEntry = {
   id: number;
