@@ -1706,8 +1706,14 @@ function PlayTab({
                     <span className="roster-name">
                       <strong>{team.name}</strong>
                       <small className="muted">
-                        {team.players.map((player) => player.name).join(", ") ||
-                          "No players"}
+                        {team.players.length === 0
+                          ? "No players"
+                          : team.players.map((player, index) => (
+                              <span className="lineup-name" key={player.id}>
+                                {player.name}
+                                {index < team.players.length - 1 ? ", " : ""}
+                              </span>
+                            ))}
                       </small>
                     </span>
                   </div>
