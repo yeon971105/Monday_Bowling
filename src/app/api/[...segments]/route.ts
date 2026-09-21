@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import pdf from "pdf-parse";
 import {
   addAverageHistory,
+  clearSavedLineup,
   getDb,
+  getSavedLineup,
   getSettings,
   listPlayers,
   persistDb,
   rowToPlayer,
+  saveLineup,
 } from "@/lib/db";
 import { assertSettings, normalizeName, validateAverage } from "@/lib/bowling";
 import { buildRepeatPairs, generateTeams } from "@/lib/generator";
@@ -23,6 +26,7 @@ import {
   fetchLeagueReportSheets,
   pickLatestSheet,
 } from "@/lib/league-sync";
+import { parseLineupInput } from "@/lib/lineup";
 import { parseBlsText } from "@/lib/pdf-parser";
 import {
   buildStoredGameResults,
@@ -291,6 +295,9 @@ export async function GET(_request: NextRequest, context: Context) {
   try {
     const s = (await context.params).segments;
     const db = getDb();
+    if (s[0] === "lineup" && s.length === 1) {
+      return json({ lineup: getSavedLineup(db) });
+    }
     if (s[0] === "league" && s[1] === "available") {
       const record = db
         .prepare(
@@ -759,6 +766,7 @@ export async function POST(request: NextRequest, context: Context) {
       });
       recordLastGamePrize({ sessionId, sessionDate, prize: lastGamePrize });
       const manualUpdated = refreshManualAveragesFromHistory(db);
+      clearSavedLineup(db);
       return json(
         {
           id: sessionId,
@@ -846,6 +854,10 @@ export async function PUT(request: NextRequest, context: Context) {
   try {
     const s = (await context.params).segments;
     const db = getDb();
+    if (s[0] === "lineup" && s.length === 1) {
+      const teams = parseLineupInput(await request.json());
+      return json({ lineup: saveLineup(teams, db) });
+    }
     if (s[0] === "sessions" && s[1]) {
       const id = Number(s[1]);
       const existing = db
@@ -1036,6 +1048,10 @@ export async function DELETE(request: NextRequest, context: Context) {
   try {
     const s = (await context.params).segments;
     const db = getDb();
+    if (s[0] === "lineup" && s.length === 1) {
+      clearSavedLineup(db);
+      return json({ ok: true });
+    }
     if (s[0] === "money" && s[1] === "entries" && s[2]) {
       return json(deleteScratchPayout(Number(s[2])));
     }

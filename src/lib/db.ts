@@ -7,7 +7,7 @@ import {
   resolveUsedAverage,
 } from "./bowling";
 import { DEFAULT_MONDAY_ROSTER } from "./default-roster";
-import type { LeagueSettings, Player } from "./types";
+import type { LeagueSettings, Player, SavedLineup } from "./types";
 
 type SqliteDb = InstanceType<typeof Database>;
 
@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   game_count INTEGER NOT NULL DEFAULT 3,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS saved_lineup (
+  id INTEGER PRIMARY KEY CHECK(id = 1),
+  teams_json TEXT NOT NULL,
+  saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
@@ -284,6 +289,36 @@ export function persistDb(): void {
   } catch {
     // Local file DBs expose sync() but throw SyncNotSupported.
   }
+}
+
+/** The one lineup built ahead of the night (e.g. Sunday), shared by every device. */
+export function getSavedLineup(db = getDb()): SavedLineup | null {
+  const row = db
+    .prepare("SELECT teams_json, saved_at FROM saved_lineup WHERE id = 1")
+    .get() as { teams_json: string; saved_at: string } | undefined;
+  if (!row) return null;
+  return {
+    teams: JSON.parse(row.teams_json) as SavedLineup["teams"],
+    savedAt: row.saved_at,
+  };
+}
+
+export function saveLineup(
+  teams: SavedLineup["teams"],
+  db = getDb(),
+): SavedLineup {
+  db.prepare(
+    `INSERT INTO saved_lineup(id, teams_json, saved_at)
+     VALUES (1, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET
+       teams_json = excluded.teams_json,
+       saved_at = excluded.saved_at`,
+  ).run(JSON.stringify(teams));
+  return getSavedLineup(db)!;
+}
+
+export function clearSavedLineup(db = getDb()): void {
+  db.prepare("DELETE FROM saved_lineup WHERE id = 1").run();
 }
 
 export function getSettings(db = getDb()): LeagueSettings {

@@ -166,3 +166,8 @@ export type ScratchMoneySnapshot = {
   members: ScratchPoolMember[];
   entries: ScratchLedgerEntry[];
 };
+
+export type SavedLineup = {
+  teams: GenerationResult["teams"];
+  savedAt: string;
+};

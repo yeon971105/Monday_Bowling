@@ -23,12 +23,14 @@ import {
   type TeamForScoring,
 } from "@/lib/scoring";
 import { recalculateTeams, teamMetrics } from "@/lib/generator";
+import { refreshLineupTeams } from "@/lib/lineup";
 import type {
   BalancingMode,
   GenerationResult,
   GeneratorPlayer,
   Player,
   PlayerStat,
+  SavedLineup,
   ScratchLedgerEntry,
   ScratchMoneySnapshot,
   SessionTeamResult,
@@ -336,6 +338,10 @@ function PlayTab({
     null,
   );
   const [savedOnce, setSavedOnce] = useState(false);
+  const [savedLineup, setSavedLineup] = useState<SavedLineup | null>(null);
+  const [lineupSync, setLineupSync] = useState<"idle" | "saved" | "error">(
+    "idle",
+  );
   const draftReady = useRef(false);
   const skipNextDraftSave = useRef(false);
 
@@ -368,6 +374,8 @@ function PlayTab({
       "/api/league/available",
     );
     setLeagueOptions(available.players);
+    const lineup = await api<{ lineup: SavedLineup | null }>("/api/lineup");
+    setSavedLineup(lineup.lineup);
   }, []);
 
   useEffect(() => {
@@ -611,6 +619,27 @@ function PlayTab({
       ),
     [scores],
   );
+
+  // Keep the lineup on the server while it is still just a lineup (no scores
+  // yet), so it can be picked up on another device before the night starts.
+  useEffect(() => {
+    if (step !== "game" || !result || savedOnce) return;
+    if (clampGameIndex(gameIndex) !== 0 || nightHasScores) return;
+    if (!result.teams.some((team) => team.players.length > 0)) return;
+    const handle = window.setTimeout(() => {
+      api<{ lineup: SavedLineup }>("/api/lineup", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teams: result.teams }),
+      })
+        .then((data) => {
+          setSavedLineup(data.lineup);
+          setLineupSync("saved");
+        })
+        .catch(() => setLineupSync("error"));
+    }, 800);
+    return () => window.clearTimeout(handle);
+  }, [step, result, gameIndex, nightHasScores, savedOnce]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -1293,6 +1322,51 @@ function PlayTab({
     }
   };
 
+  const loadSavedLineup = () => {
+    if (!savedLineup) return;
+    const teams = recalculateTeams(
+      refreshLineupTeams(savedLineup.teams, players),
+    );
+    const ids = teams.teams.flatMap((team) =>
+      team.players.map((player) => String(player.id)),
+    );
+    const nextSeed = newSeed();
+    setSeed(nextSeed);
+    setMode("MANUAL");
+    setResult({
+      seed: nextSeed,
+      teams: teams.teams,
+      fairness: teams.fairness,
+    });
+    setSelected(new Set(ids.map(Number).filter(Number.isFinite)));
+    setScores(emptyScores(ids));
+    setTeamsByGame([teams.teams, null, null]);
+    setTeamCount(Math.min(MAX_TEAMS, Math.max(MIN_TEAMS, teams.teams.length)));
+    setGameIndex(0);
+    setGameCount(GAMES_PER_SESSION);
+    setSavedOnce(false);
+    setScratchWinners([]);
+    setLastGamePrize(null);
+    setGameEditing(false);
+    setStep("game");
+    setMessage("Loaded the saved lineup.");
+  };
+
+  const discardSavedLineup = async () => {
+    if (!confirm("Discard the saved lineup for everyone?")) return;
+    setBusy(true);
+    try {
+      await api("/api/lineup", { method: "DELETE" });
+      setSavedLineup(null);
+      setLineupSync("idle");
+      setMessage("Saved lineup removed.");
+    } catch (error: any) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const resetToSetup = () => {
     clearNightDraft();
     setStep("setup");
@@ -1332,6 +1406,7 @@ function PlayTab({
             message.includes("added") ||
             message.includes("locked") ||
             message.includes("Restored") ||
+            message.includes("Loaded") ||
             message.includes("reshuffled") ||
             message.includes("shuffled") ||
             message.includes("Ready for") ||
@@ -1575,6 +1650,54 @@ function PlayTab({
             </div>
           </div>
 
+          {savedLineup && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <h3>Saved lineup</h3>
+              <p className="muted">
+                Saved{" "}
+                {new Date(
+                  `${savedLineup.savedAt.replace(" ", "T")}Z`,
+                ).toLocaleString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+                . Averages update from the current roster when you use it.
+              </p>
+              <div className="roster-list" style={{ marginTop: 12 }}>
+                {savedLineup.teams.map((team) => (
+                  <div className="roster-row" key={team.name}>
+                    <span className="roster-name">
+                      <strong>{team.name}</strong>
+                      <small className="muted">
+                        {team.players.map((player) => player.name).join(", ") ||
+                          "No players"}
+                      </small>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="actions" style={{ marginTop: 12 }}>
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={loadSavedLineup}
+                >
+                  Use this lineup
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => void discardSavedLineup()}
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Generate teams</h3>
             <p className="muted">
@@ -1815,6 +1938,14 @@ function PlayTab({
                 Team totals update as you enter scores. Winner locks in when
                 everyone has a number.
               </p>
+              {lineupSync === "saved" && !nightHasScores && (
+                <p className="muted">Lineup saved for later.</p>
+              )}
+              {lineupSync === "error" && !nightHasScores && (
+                <p className="muted">
+                  Couldn’t save the lineup — check your connection.
+                </p>
+              )}
             </div>
             <div className="actions">
               <button
