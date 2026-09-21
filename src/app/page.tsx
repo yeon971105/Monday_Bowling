@@ -331,6 +331,7 @@ function PlayTab({
   const [generateReshuffle, setGenerateReshuffle] = useState(false);
   const [gameEditing, setGameEditing] = useState(false);
   const [addToTeamName, setAddToTeamName] = useState<string | null>(null);
+  const [addPickIds, setAddPickIds] = useState<Set<number>>(new Set());
   const [teamGuestName, setTeamGuestName] = useState("");
   const [teamGuestAvg, setTeamGuestAvg] = useState("");
   const [scratchWinners, setScratchWinners] = useState<ScratchWinner[]>([]);
@@ -995,36 +996,65 @@ function PlayTab({
     patchResultTeams(nextTeams);
   };
 
-  const addToTeam = (teamName: string, player: Player) => {
-    if (!result || player.usedAverage == null) return;
-    const already = result.teams.some((team) =>
-      team.players.some((member) => String(member.id) === String(player.id)),
+  const addPlayersToTeam = (teamName: string, toAdd: Player[]) => {
+    if (!result) return;
+    const onTeams = new Set(
+      result.teams.flatMap((team) =>
+        team.players.map((member) => String(member.id)),
+      ),
     );
-    if (already) {
-      setMessage(`${player.displayName} is already on a team.`);
-      return;
+    const members: GeneratorPlayer[] = [];
+    const skipped: string[] = [];
+    for (const player of toAdd) {
+      if (player.usedAverage == null || onTeams.has(String(player.id))) {
+        skipped.push(player.displayName);
+        continue;
+      }
+      onTeams.add(String(player.id));
+      members.push({
+        id: String(player.id),
+        name: player.displayName,
+        usedAverage: player.usedAverage,
+        averageMode: player.averageMode,
+        handicap: player.handicap ?? 0,
+        projectedScore: player.projectedHandicapScore ?? player.usedAverage,
+      });
     }
-    const member: GeneratorPlayer = {
-      id: String(player.id),
-      name: player.displayName,
-      usedAverage: player.usedAverage,
-      averageMode: player.averageMode,
-      handicap: player.handicap ?? 0,
-      projectedScore: player.projectedHandicapScore ?? player.usedAverage,
-    };
+    if (skipped.length)
+      setMessage(
+        `${skipped.join(", ")} ${skipped.length === 1 ? "is" : "are"} already on a team or has no average.`,
+      );
+    if (!members.length) return;
     const nextTeams = result.teams.map((entry) =>
       entry.name !== teamName
         ? entry
-        : { ...entry, players: [...entry.players, member] },
+        : { ...entry, players: [...entry.players, ...members] },
     );
-    setScores((prev) => ({
-      ...prev,
-      [member.id]: prev[member.id] ?? [null, null, null],
-    }));
-    setSelected((prev) => new Set(prev).add(player.id));
+    setScores((prev) => {
+      const next = { ...prev };
+      for (const member of members)
+        next[member.id] = prev[member.id] ?? [null, null, null];
+      return next;
+    });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const player of toAdd) next.add(player.id);
+      return next;
+    });
     patchResultTeams(nextTeams);
     setAddToTeamName(null);
   };
+
+  const addToTeam = (teamName: string, player: Player) =>
+    addPlayersToTeam(teamName, [player]);
+
+  const toggleAddPick = (id: number) =>
+    setAddPickIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const setTeamPlayerAverage = (
     teamName: string,
@@ -1056,6 +1086,10 @@ function PlayTab({
     }
     patchResultTeams(nextTeams);
   };
+
+  useEffect(() => {
+    setAddPickIds(new Set());
+  }, [addToTeamName]);
 
   const availableToAdd = useMemo(() => {
     if (!result) return [];
@@ -2595,7 +2629,8 @@ function PlayTab({
               </button>
             </div>
             <p className="muted" style={{ marginTop: 8 }}>
-              Pick someone from the roster, or add a brand-new name + average.
+              Check one or more roster players, or add a brand-new name +
+              average.
             </p>
             <div className="form-grid" style={{ marginTop: 12 }}>
               <label className="field">
@@ -2629,22 +2664,44 @@ function PlayTab({
             {availableToAdd.length === 0 ? (
               <p className="muted">No roster players left to add.</p>
             ) : (
-              <div className="add-team-list">
-                {availableToAdd.map((player) => (
-                  <button
-                    key={player.id}
-                    type="button"
-                    className="button secondary add-team-item"
-                    onClick={() => addToTeam(addToTeamName, player)}
-                  >
-                    <span className="roster-name-line">
-                      <span>{player.displayName}</span>
-                      <ScratchMark on={player.scratchPool} />
-                    </span>
-                    <span className="muted">avg {player.usedAverage}</span>
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="add-team-list">
+                  {availableToAdd.map((player) => (
+                    <label
+                      key={player.id}
+                      className={`button secondary add-team-item ${addPickIds.has(player.id) ? "picked" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={addPickIds.has(player.id)}
+                        onChange={() => toggleAddPick(player.id)}
+                      />
+                      <span className="roster-name-line">
+                        <span>{player.displayName}</span>
+                        <ScratchMark on={player.scratchPool} />
+                      </span>
+                      <span className="muted">avg {player.usedAverage}</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  className="button"
+                  style={{ marginTop: 10 }}
+                  disabled={busy || addPickIds.size === 0}
+                  onClick={() =>
+                    addPlayersToTeam(
+                      addToTeamName,
+                      availableToAdd.filter((player) =>
+                        addPickIds.has(player.id),
+                      ),
+                    )
+                  }
+                >
+                  {addPickIds.size
+                    ? `Add ${addPickIds.size} selected to ${addToTeamName}`
+                    : "Select players to add"}
+                </button>
+              </>
             )}
           </div>
         </div>

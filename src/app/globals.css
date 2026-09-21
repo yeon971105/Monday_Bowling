@@ -569,9 +569,23 @@ tr:last-child td {
 }
 .add-team-item {
   display: flex !important;
-  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
+  cursor: pointer;
+}
+.add-team-item input {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  flex: none;
+}
+.add-team-item .roster-name-line {
+  flex: 1;
+}
+.add-team-item.picked {
+  border-color: var(--green);
 }
 .team-card.team-win {
   background: #f3faf6;
