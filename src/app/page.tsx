@@ -1098,10 +1098,14 @@ function PlayTab({
         team.players.map((player) => String(player.id)),
       ),
     );
+    // Only people checked in on setup, and not already placed on a team.
     return players.filter(
-      (player) => player.usedAverage != null && !onTeams.has(String(player.id)),
+      (player) =>
+        player.usedAverage != null &&
+        selected.has(player.id) &&
+        !onTeams.has(String(player.id)),
     );
-  }, [players, result]);
+  }, [players, result, selected]);
 
   const currentNightPlayers = useMemo(() => {
     if (!result) return participants;
@@ -1741,7 +1745,7 @@ function PlayTab({
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Generate teams</h3>
             <p className="muted">
-              Confirm who’s checked in, then choose Balance or Random.
+              Confirm who’s checked in, then choose Balance or Manual.
             </p>
             <div className="actions" style={{ marginTop: 12 }}>
               <button
@@ -1949,7 +1953,7 @@ function PlayTab({
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Generate teams for Game {resetTargetGame + 1}</h3>
             <p className="muted">
-              Confirm who’s checked in, then choose Balance or Random.
+              Confirm who’s checked in, then choose Balance or Manual.
             </p>
             <div className="actions" style={{ marginTop: 12 }}>
               <button
@@ -2517,8 +2521,8 @@ function PlayTab({
                   : "Game 1"}
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
-              Balance: avg 150+ / under 150 pools. Random: full shuffle. Manual:
-              start with empty teams and place each player.
+              Balance: avg 150+ / under 150 pools. Manual: start with empty
+              teams and place each player.
             </p>
             <div className="actions" style={{ marginTop: 16 }}>
               <button
@@ -2552,38 +2556,6 @@ function PlayTab({
                 }}
               >
                 Balance
-              </button>
-              <button
-                className="button secondary"
-                disabled={
-                  busy ||
-                  (generateReshuffle
-                    ? currentNightPlayers.length < teamCount
-                    : attendees.length < teamCount)
-                }
-                onClick={() => {
-                  setGenerateOpen(false);
-                  const reshuffle = generateReshuffle;
-                  const fromReset = generateFromReset;
-                  setGenerateReshuffle(false);
-                  void generate(
-                    "RANDOM",
-                    reshuffle
-                      ? {
-                          reshuffle: true,
-                          forGameIndex: gameIndex,
-                          playersOverride: currentNightPlayers,
-                        }
-                      : fromReset
-                        ? {
-                            fromReset: true,
-                            forGameIndex: resetTargetGame,
-                          }
-                        : undefined,
-                  );
-                }}
-              >
-                Random
               </button>
               {!generateReshuffle && !generateFromReset ? (
                 <button
@@ -2668,7 +2640,10 @@ function PlayTab({
             </button>
             <hr style={{ margin: "18px 0", borderColor: "var(--line)" }} />
             {availableToAdd.length === 0 ? (
-              <p className="muted">No roster players left to add.</p>
+              <p className="muted">
+                Everyone checked in is already on a team. Check in more people
+                on the setup screen, or add a new name above.
+              </p>
             ) : (
               <>
                 <div className="add-team-list">
