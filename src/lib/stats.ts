@@ -219,7 +219,7 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
       const totalPins = games.reduce((sum, value) => sum + value, 0);
       const mondayAverage = mondayAverageFromScores(games);
       const handicapAverage =
-        games.length > 10 ? mondayAverage : player.usedAverage;
+        games.length >= 10 ? mondayAverage : player.usedAverage;
       const decided = wins + losses;
       return {
         id: player.id,
@@ -247,7 +247,7 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
 
 /** Minimum Monday nights before history average replaces a locked guest average. */
 export const HISTORY_AVG_MIN_SESSIONS = 3;
-export const MONDAY_AVG_MIN_GAMES = 11;
+export const MONDAY_AVG_MIN_GAMES = 10;
 
 /** After 10 games, Monday history becomes the used average and any lock is removed. */
 export function refreshManualAveragesFromHistory(db = getDb()): {
