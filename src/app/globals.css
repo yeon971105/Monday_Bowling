@@ -1507,5 +1507,13 @@ dialog::backdrop {
   }
 }
 .lineup-name {
-  white-space: nowrap;
+  white-space: normal;
+}
+.saved-lineup-list .roster-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+.saved-lineup-list .roster-name,
+.saved-lineup-list .roster-name small {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

@@ -1731,7 +1731,10 @@ function PlayTab({
                 })}
                 . Averages update from the current roster when you use it.
               </p>
-              <div className="roster-list" style={{ marginTop: 12 }}>
+              <div
+                className="roster-list saved-lineup-list"
+                style={{ marginTop: 12 }}
+              >
                 {savedLineup.teams.map((team) => (
                   <div className="roster-row" key={team.name}>
                     <span className="roster-name">
