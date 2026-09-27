@@ -40,7 +40,7 @@ This is a one-page English PWA for a weekly bowling league. The README is the pr
 ## History
 
 - Default sort is Win % descending. Desktop headers and the mobile Change sort control use the same sort state and sorted rows.
-- Desktop may use the full statistics table. At narrow widths, show all seven statistics as labeled player-card values without horizontal scrolling.
+- Desktop uses the full statistics table. At narrow widths, each player card shows name and average mode with W-L and Win % in the header, then one row of four labeled values: Games, HDC, Mon Avg, and Used Avg.
 - Weekly sessions remain limited to the most recent three months by the existing page logic.
 
 ## Feedback and accessibility

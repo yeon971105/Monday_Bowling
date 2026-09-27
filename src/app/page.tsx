@@ -3678,39 +3678,36 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
         <div className="stats-mobile-list">
           {sortedStats.map((player) => (
             <article className="stats-mobile-card" key={player.id}>
-              <div className="stats-mobile-name">
-                <NameWithScratch
-                  name={player.displayName}
-                  on={player.scratchPool}
-                />
-                <small className="muted">{player.averageMode}</small>
+              <div className="stats-mobile-heading">
+                <div className="stats-mobile-person">
+                  <NameWithScratch
+                    name={player.displayName}
+                    on={player.scratchPool}
+                  />
+                  <small className="muted">{player.averageMode}</small>
+                </div>
+                <span
+                  className="stats-mobile-record"
+                  aria-label={`${player.wins} wins, ${player.losses} losses${player.ties ? `, ${player.ties} ties` : ""}; ${player.winRate == null ? "no win rate" : `${Math.round(player.winRate * 100)} percent win rate`}`}
+                >
+                  {player.wins}-{player.losses}
+                  {player.ties ? `-${player.ties}` : ""} ·{" "}
+                  {player.winRate == null
+                    ? "—%"
+                    : `${Math.round(player.winRate * 100)}%`}
+                </span>
               </div>
               <dl className="stats-mobile-grid">
-                <div>
-                  <dt>Games W-L</dt>
-                  <dd>
-                    {player.wins}-{player.losses}
-                    {player.ties ? `-${player.ties}` : ""}
-                  </dd>
-                </div>
                 <div>
                   <dt>Games</dt>
                   <dd>{player.gamesPlayed}</dd>
                 </div>
                 <div>
-                  <dt>Handicap</dt>
+                  <dt>HDC</dt>
                   <dd>{fmt(player.handicap)}</dd>
                 </div>
                 <div>
-                  <dt>Win %</dt>
-                  <dd>
-                    {player.winRate == null
-                      ? "—"
-                      : `${Math.round(player.winRate * 100)}%`}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Monday avg</dt>
+                  <dt>Mon avg</dt>
                   <dd>{fmt(player.mondayAverage)}</dd>
                 </div>
                 <div>

@@ -279,43 +279,72 @@ textarea:focus {
 }
 .stats-mobile-card {
   min-width: 0;
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 16px;
   background: #fbfcfa;
 }
-.stats-mobile-name {
+.stats-mobile-heading {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
-.stats-mobile-name .roster-name-line,
-.stats-mobile-name .roster-name-line strong {
+.stats-mobile-person {
+  min-width: 0;
+}
+.stats-mobile-person .roster-name-line,
+.stats-mobile-person .roster-name-line strong {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.stats-mobile-name > small {
-  flex: 0 0 auto;
+.stats-mobile-person .roster-name-line strong {
+  font-size: 19px;
+  line-height: 1.2;
+}
+.stats-mobile-person > small {
+  display: block;
+  margin-top: 2px;
   font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.stats-mobile-record {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #e9efeb;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .stats-mobile-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-  margin: 12px 0 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
 }
 .stats-mobile-grid > div {
   min-width: 0;
+  padding: 10px 6px;
+  border-radius: 12px;
+  background: #fff;
+  text-align: center;
 }
 .stats-mobile-grid dt {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 .stats-mobile-grid dd {
-  margin: 2px 0 0;
-  font-size: 15px;
+  margin: 4px 0 0;
+  font-size: 20px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -1336,6 +1365,32 @@ dialog::backdrop {
   }
 }
 @media (max-width: 520px) {
+  .stats-mobile-card {
+    padding: 12px;
+    border-radius: 14px;
+  }
+  .stats-mobile-person .roster-name-line strong {
+    font-size: 17px;
+  }
+  .stats-mobile-record {
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+  .stats-mobile-grid {
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .stats-mobile-grid > div {
+    padding: 8px 2px;
+    border-radius: 10px;
+  }
+  .stats-mobile-grid dt {
+    font-size: 8px;
+    letter-spacing: 0.025em;
+  }
+  .stats-mobile-grid dd {
+    font-size: 16px;
+  }
   .scoreboard.single-game .scoreboard-head.single,
   .scoreboard.single-game .scoreboard-row.single {
     grid-template-columns: minmax(0, 1fr) 70px 54px;
