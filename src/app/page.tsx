@@ -610,6 +610,11 @@ function PlayTab({
         .map((player) => player.name),
     );
   }, [result, scores, gameIndex]);
+  const scoresTotal = scoringTeams.reduce(
+    (total, team) => total + team.playerIds.length,
+    0,
+  );
+  const scoresEntered = Math.max(0, scoresTotal - scoresNeeded.length);
 
   const nightHasScores = useMemo(
     () =>
@@ -2068,6 +2073,24 @@ function PlayTab({
             </div>
           </div>
 
+          <div className="card score-progress">
+            <div
+              className="track"
+              role="progressbar"
+              aria-label={`Scores entered for Game ${gameIndex + 1}`}
+              aria-valuemin={0}
+              aria-valuemax={Math.max(scoresTotal, 1)}
+              aria-valuenow={scoresEntered}
+              aria-valuetext={`${scoresEntered} of ${scoresTotal} scores entered`}
+            >
+              <i
+                style={{
+                  width: `${scoresTotal ? (scoresEntered / scoresTotal) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+
           {gameEditing && (
             <div
               className="actions"
@@ -3024,8 +3047,8 @@ function ClubTab({
     <>
       <div className="page-title">
         <div>
-          <h2>Club</h2>
-          <p>Club overview. Pot, members, and payouts.</p>
+          <h2>Club overview</h2>
+          <p>Pot, members, and payouts.</p>
           <p className="muted club-policy-copy">
             ${data?.duesAmount ?? 20} on the 9th from members · $
             {data?.ticketAmount ?? 10} per scratch ticket.
@@ -3035,33 +3058,48 @@ function ClubTab({
       {error ? <div className="notice error">{error}</div> : null}
 
       <div className="money-hero card">
-        <div>
-          <span className="muted">Club pot remaining</span>
-          <strong
-            className={`money-balance ${
-              (data?.balance ?? 0) < 0 ? "negative" : ""
-            }`}
-          >
-            {data ? formatScratchMoney(data.balance) : "—"}
-          </strong>
+        <div className="club-summary-metrics">
+          <div className="club-summary-balance">
+            <span className="muted">Club pot</span>
+            <strong
+              className={`money-balance ${
+                (data?.balance ?? 0) < 0 ? "negative" : ""
+              }`}
+            >
+              {data ? formatScratchMoney(data.balance) : "—"}
+            </strong>
+            <small className="muted">remaining</small>
+          </div>
+          <div className="club-summary-fact">
+            <span className="muted">Next collection</span>
+            <strong>
+              {data ? `+${formatScratchMoney(data.nextDuesTotal)}` : "—"}
+            </strong>
+            <small className="muted">
+              {data
+                ? `${prettyMoneyDate(data.nextDuesDate)} · ${data.nextDuesCount} people × ${formatScratchMoney(data.duesAmount)}`
+                : "Loading…"}
+            </small>
+          </div>
+          <div className="club-summary-fact">
+            <span className="muted">Members</span>
+            <strong>{data ? data.members.length : "—"}</strong>
+            <small className="muted">Scratch-ticket pool</small>
+          </div>
         </div>
-        <p className="muted" style={{ margin: 0 }}>
-          {data
-            ? `Next collection ${prettyMoneyDate(data.nextDuesDate)} · ${
-                data.nextDuesCount
-              } people × ${formatScratchMoney(data.duesAmount)} = ${formatScratchMoney(
-                data.nextDuesTotal,
-              )}`
-            : "Loading…"}
-        </p>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="page-title" style={{ marginBottom: 0 }}>
           <div>
-            <h3 style={{ margin: 0 }}>Members</h3>
+            <h3 style={{ margin: 0 }}>
+              Members{" "}
+              {data ? (
+                <span className="team-badge">{data.members.length}</span>
+              ) : null}
+            </h3>
             <p className="muted" style={{ margin: "4px 0 0" }}>
-              Red S follows these names in Play, games, and History.
+              Red S = scratch-ticket member.
             </p>
           </div>
           <button
@@ -3100,7 +3138,9 @@ function ClubTab({
           ) : (
             <div className="club-names">
               {data.members.map((member) => (
-                <NameWithScratch key={member.id} name={member.name} on />
+                <span className="club-member-pill" key={member.id}>
+                  <NameWithScratch name={member.name} on />
+                </span>
               ))}
             </div>
           )
@@ -3143,7 +3183,7 @@ function ClubTab({
                 ? selectedPayouts.length
                   ? selectedPayouts.map((player) => player.name).join(" · ")
                   : "Check who received money, then save."
-                : "$10 team tickets, $5 Game 3 tickets, and money you recorded."}
+                : "Ticket and recorded payouts"}
             </p>
           </div>
           <button
@@ -3304,7 +3344,7 @@ function ClubTab({
       <div className="card" style={{ marginTop: 16 }}>
         <h3>Ledger</h3>
         <p className="muted" style={{ margin: "4px 0 0" }}>
-          In and out by day. Who got paid is in Paid out.
+          Daily club-pot activity.
         </p>
         {!data ? (
           <p style={{ marginTop: 12 }}>
