@@ -37,6 +37,7 @@ import {
   LAST_GAME_INDEX,
   toSessionTeamResults,
   type MoneyTeam,
+  type ScoreMap,
   type TeamForScoring,
 } from "@/lib/scoring";
 import {
@@ -68,6 +69,21 @@ const fail = (error: unknown, status = 400) =>
     { error: error instanceof Error ? error.message : String(error) },
     status,
   );
+
+function enteredGameCount(scores: ScoreMap): number {
+  let count = 0;
+  for (const games of Object.values(scores))
+    if (Array.isArray(games))
+      games.forEach((score, index) => {
+        if (
+          index < GAMES_PER_SESSION &&
+          typeof score === "number" &&
+          Number.isFinite(score)
+        )
+          count = Math.max(count, index + 1);
+      });
+  return count;
+}
 
 function getLeagueReportUrl(db = getDb()): string {
   const row = db
@@ -718,14 +734,22 @@ export async function POST(request: NextRequest, context: Context) {
         .filter((p: any) => !p.guest)
         .map((p: any) => Number(p.id));
       const absent = activeIds.filter((id) => !attendeeIds.includes(id));
-      const gameCount = Number(body.gameCount ?? GAMES_PER_SESSION);
+      const scores = (body.scores ?? {}) as ScoreMap;
+      const requestedGameCount = Number(body.gameCount ?? GAMES_PER_SESSION);
+      const gameLimit = Number.isFinite(requestedGameCount)
+        ? Math.max(0, Math.min(GAMES_PER_SESSION, Math.trunc(requestedGameCount)))
+        : GAMES_PER_SESSION;
+      const gameCount = Math.min(
+        gameLimit,
+        enteredGameCount(scores),
+      );
       const lastGameTeams =
         gameCount >= GAMES_PER_SESSION
           ? (body.gameRosters?.[LAST_GAME_INDEX] ?? body.teams)
           : [];
       const lastGamePrize = computeLastGamePrize({
         players: lastGameTeams.flatMap((team: any) => team.players ?? []),
-        scores: body.scores ?? {},
+        scores,
       });
       const result = db
         .prepare(
@@ -749,7 +773,7 @@ export async function POST(request: NextRequest, context: Context) {
           JSON.stringify(body.generatedTeams ?? body.teams),
           JSON.stringify(body.teams),
           JSON.stringify(body.fairness ?? {}),
-          JSON.stringify(body.scores ?? {}),
+          JSON.stringify(scores),
           JSON.stringify(body.results ?? []),
           JSON.stringify(body.gameRosters ?? null),
           JSON.stringify(body.gameResults ?? null),
@@ -867,6 +891,7 @@ export async function PUT(request: NextRequest, context: Context) {
       const body = await request.json();
       const sessionDate = existing.session_date;
       const scores = body.scores ?? parseSessionScores(existing.scores_json);
+      const gameCount = enteredGameCount(scores);
       const teams = JSON.parse(existing.final_teams_json) as Array<{
         name: string;
         players: Array<{ id: string; name: string; usedAverage: number }>;
@@ -882,7 +907,7 @@ export async function PUT(request: NextRequest, context: Context) {
       const series = computeSeriesResults({
         teams: scoringTeams,
         scores,
-        gameCount: existing.game_count ?? GAMES_PER_SESSION,
+        gameCount,
       });
       const results = toSessionTeamResults(series);
       const storedRosters = existing.game_rosters_json
@@ -892,7 +917,7 @@ export async function PUT(request: NextRequest, context: Context) {
           }> | null>)
         : [];
       const fallbackRosters = Array.from(
-        { length: existing.game_count ?? GAMES_PER_SESSION },
+        { length: gameCount },
         () => teams,
       );
       const rosters = storedRosters.length ? storedRosters : fallbackRosters;
@@ -914,7 +939,7 @@ export async function PUT(request: NextRequest, context: Context) {
       const gameResults = buildStoredGameResults({
         teamsByGame: moneyTeamsByGame,
         scores,
-        gameCount: existing.game_count ?? GAMES_PER_SESSION,
+        gameCount,
       });
       const nightPlayers = Array.from(
         new Map(
@@ -937,7 +962,7 @@ export async function PUT(request: NextRequest, context: Context) {
         lotteryIds,
       });
       const lastRoster =
-        (existing.game_count ?? GAMES_PER_SESSION) >= GAMES_PER_SESSION
+        gameCount >= GAMES_PER_SESSION
           ? (rosters[LAST_GAME_INDEX] ?? teams)
           : [];
       const lastGamePrize = computeLastGamePrize({
@@ -946,7 +971,7 @@ export async function PUT(request: NextRequest, context: Context) {
       });
       db.prepare(
         `UPDATE sessions SET scores_json=?, results_json=?, game_results_json=?,
-          scratch_winners_json=?, last_game_prize_json=?, updated_at=CURRENT_TIMESTAMP
+          scratch_winners_json=?, last_game_prize_json=?, game_count=?, updated_at=CURRENT_TIMESTAMP
          WHERE id=?`,
       ).run(
         JSON.stringify(scores),
@@ -954,6 +979,7 @@ export async function PUT(request: NextRequest, context: Context) {
         JSON.stringify(gameResults),
         JSON.stringify(scratchWinners),
         JSON.stringify(lastGamePrize),
+        gameCount,
         id,
       );
       removeScratchTicketsForSession(id);

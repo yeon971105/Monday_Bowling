@@ -143,9 +143,10 @@ export function scoreTeams(
   };
 }
 
-const HIGH_AVERAGE_SPLIT = 150;
+const HIGH_AVERAGE_SPLIT = 181;
+const MID_AVERAGE_SPLIT = 140;
 
-/** Shuffle ≥150 and <150 pools, then snake-deal onto teams (highs first, then lows). */
+/** Shuffle <140, 140–<181, and ≥181 pools, then snake-deal each onto teams. */
 function balancedByAverageSplit(
   players: GeneratorPlayer[],
   sizes: number[],
@@ -155,8 +156,16 @@ function balancedByAverageSplit(
     players.filter((player) => player.usedAverage >= HIGH_AVERAGE_SPLIT),
     random,
   );
+  const mids = shuffle(
+    players.filter(
+      (player) =>
+        player.usedAverage >= MID_AVERAGE_SPLIT &&
+        player.usedAverage < HIGH_AVERAGE_SPLIT,
+    ),
+    random,
+  );
   const lows = shuffle(
-    players.filter((player) => player.usedAverage < HIGH_AVERAGE_SPLIT),
+    players.filter((player) => player.usedAverage < MID_AVERAGE_SPLIT),
     random,
   );
   const teams = sizes.map(() => [] as GeneratorPlayer[]);
@@ -193,6 +202,7 @@ function balancedByAverageSplit(
   };
 
   snakeDeal(highs);
+  snakeDeal(mids);
   snakeDeal(lows);
 
   const overflow = teams.flatMap((team, i) => team.splice(sizes[i]));
@@ -235,7 +245,7 @@ export function generateTeams(options: {
     for (const size of sizes)
       selected.push(shuffled.slice(cursor, (cursor += size)));
   } else if (mode === "BALANCED_REPEATS") {
-    // Same 150-split shuffle, try a few deals and keep the one with fewer repeats.
+    // Same average-band shuffle, try a few deals and keep the one with fewer repeats.
     let best = balancedByAverageSplit(players, sizes, random);
     let bestScore = scoreTeams(best, pairs, true).score;
     for (let attempt = 0; attempt < 31; attempt++) {
@@ -248,7 +258,7 @@ export function generateTeams(options: {
     }
     selected = best;
   } else {
-    // BALANCED: avg ≥150 / <150 pools, random within each, no handicap optimizing.
+    // BALANCED: avg <140 / 140–<181 / ≥181 pools, random within each.
     selected = balancedByAverageSplit(players, sizes, random);
   }
 

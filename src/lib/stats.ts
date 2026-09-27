@@ -219,7 +219,9 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
       const totalPins = games.reduce((sum, value) => sum + value, 0);
       const mondayAverage = mondayAverageFromScores(games);
       const handicapAverage =
-        games.length >= 10 ? mondayAverage : player.usedAverage;
+        games.length >= MONDAY_AVG_MIN_GAMES
+          ? mondayAverage
+          : player.usedAverage;
       const decided = wins + losses;
       return {
         id: player.id,
@@ -245,11 +247,9 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
     });
 }
 
-/** Minimum Monday nights before history average replaces a locked guest average. */
-export const HISTORY_AVG_MIN_SESSIONS = 3;
-export const MONDAY_AVG_MIN_GAMES = 10;
+export const MONDAY_AVG_MIN_GAMES = 9;
 
-/** After 10 games, Monday history becomes the used average and any lock is removed. */
+/** At 9 total games, Monday history replaces the source average and any lock. */
 export function refreshManualAveragesFromHistory(db = getDb()): {
   updated: number;
   unlocked: number;
@@ -277,29 +277,6 @@ export function refreshManualAveragesFromHistory(db = getDb()): {
       updated += 1;
       continue;
     }
-
-    // Unlocked guests keep tracking Monday history before the automatic threshold.
-    if (player.leagueAverage == null) {
-      if (stat.sessions < HISTORY_AVG_MIN_SESSIONS) continue;
-      if (player.averageMode === "MANUAL") {
-        if (player.manualAverage === stat.mondayAverage) continue;
-        db.prepare(
-          `UPDATE players SET manual_average=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-        ).run(stat.mondayAverage, player.id);
-        addAverageHistory(player.id, "MONDAY_HISTORY", undefined, db);
-        updated += 1;
-      }
-      continue;
-    }
-
-    // League members on MANUAL still track Monday history average.
-    if (player.averageMode !== "MANUAL") continue;
-    if (player.manualAverage === stat.mondayAverage) continue;
-    db.prepare(
-      `UPDATE players SET manual_average=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-    ).run(stat.mondayAverage, player.id);
-    addAverageHistory(player.id, "MONDAY_HISTORY", undefined, db);
-    updated += 1;
   }
   return { updated, unlocked };
 }

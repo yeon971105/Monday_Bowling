@@ -18,9 +18,10 @@ const routeContext = (segments: string[]) => ({
 describe("session save updates MANUAL monday averages", () => {
   let POST: typeof import("@/app/api/[...segments]/route").POST;
   let GET: typeof import("@/app/api/[...segments]/route").GET;
+  let PUT: typeof import("@/app/api/[...segments]/route").PUT;
 
   beforeAll(async () => {
-    ({ POST, GET } = await import("@/app/api/[...segments]/route"));
+    ({ POST, GET, PUT } = await import("@/app/api/[...segments]/route"));
   });
 
   afterAll(async () => {
@@ -33,7 +34,7 @@ describe("session save updates MANUAL monday averages", () => {
     }
   });
 
-  it("refreshes MANUAL average from saved game scores", async () => {
+  it("keeps manual input below 9 total games and switches at 9", async () => {
     const create = await POST(
       new NextRequest("http://localhost/api/players", {
         method: "POST",
@@ -141,22 +142,57 @@ describe("session save updates MANUAL monday averages", () => {
       gameCount: 3,
     };
 
-    // Guests without a league average need 3 Monday nights before history avg applies.
+    const shortNightBody = {
+      ...sessionBody,
+      scores: {
+        [String(guest.id)]: [190, 190, null],
+        "999001": [140, 140, null],
+        "999002": [140, 140, null],
+      },
+      results: [],
+      gameCount: 2,
+    };
     for (const sessionDate of ["2026-07-06", "2026-07-13", "2026-07-20"]) {
       const save = await POST(
         new NextRequest("http://localhost/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...sessionBody, sessionDate }),
+          body: JSON.stringify({ ...shortNightBody, sessionDate }),
         }),
         routeContext(["sessions"]),
       );
       expect(save.ok).toBe(true);
       if (sessionDate === "2026-07-20") {
         const saved = await save.json();
-        expect(saved.manualAveragesUpdated).toBeGreaterThanOrEqual(1);
+        expect(saved.manualAveragesUpdated).toBe(0);
       }
     }
+
+    const playersAtSixResponse = await GET(
+      new NextRequest("http://localhost/api/players"),
+      routeContext(["players"]),
+    );
+    const { players: playersAtSix } = await playersAtSixResponse.json();
+    expect(
+      playersAtSix.find((player: { id: number }) => player.id === guest.id),
+    ).toMatchObject({ manualAverage: 120, usedAverage: 120 });
+
+    const ninthGameSave = await POST(
+      new NextRequest("http://localhost/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...sessionBody,
+          sessionDate: "2026-07-27",
+          results: [],
+        }),
+      }),
+      routeContext(["sessions"]),
+    );
+    expect(ninthGameSave.ok).toBe(true);
+    expect(
+      (await ninthGameSave.json()).manualAveragesUpdated,
+    ).toBeGreaterThanOrEqual(1);
 
     const playersResponse = await GET(
       new NextRequest("http://localhost/api/players"),
@@ -184,13 +220,14 @@ describe("session save updates MANUAL monday averages", () => {
     );
     expect(guestStats).toMatchObject({
       mondayAverage: 190,
+      gamesPlayed: 9,
       wins: 0,
-      losses: 9,
-      sessions: 3,
+      losses: 0,
+      sessions: 4,
     });
   });
 
-  it("unlocks a fixed average and uses Monday average after 10 games", async () => {
+  it("keeps the current average below 9 games and unlocks at 9", async () => {
     const create = await POST(
       new NextRequest("http://localhost/api/players", {
         method: "POST",
@@ -248,7 +285,7 @@ describe("session save updates MANUAL monday averages", () => {
         },
       },
     ];
-    for (let night = 0; night < 4; night += 1) {
+    for (let night = 0; night < 2; night += 1) {
       const save = await POST(
         new NextRequest("http://localhost/api/sessions", {
           method: "POST",
@@ -274,6 +311,103 @@ describe("session save updates MANUAL monday averages", () => {
       );
       expect(save.ok).toBe(true);
     }
+
+    const firstGame = await POST(
+      new NextRequest("http://localhost/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "BALANCED",
+          targetTeamSize: 1,
+          seed: "locked-third-night",
+          attendees: teams.flatMap((team) => team.players),
+          teams,
+          gameRosters: [teams, teams, teams],
+          scores: {
+            [String(player.id)]: [180, null, null],
+            "locked-opponent": [150, null, null],
+          },
+          results: [],
+          lotteryIds: [],
+          scratchWinners: [],
+          gameCount: 1,
+        }),
+      }),
+      routeContext(["sessions"]),
+    );
+    expect(firstGame.ok).toBe(true);
+    const firstGameSaved = await firstGame.json();
+    const statsAtSevenResponse = await GET(
+      new NextRequest("http://localhost/api/stats"),
+      routeContext(["stats"]),
+    );
+    const { players: statsAtSeven } = await statsAtSevenResponse.json();
+    expect(
+      statsAtSeven.find((row: { id: number }) => row.id === player.id),
+    ).toMatchObject({
+      averageMode: "FIXED",
+      gamesPlayed: 7,
+      mondayAverage: 180,
+      handicapAverage: 120,
+      handicap: 90,
+    });
+
+    const scoresThroughGameTwo = {
+      [String(player.id)]: [180, 180, null],
+      "locked-opponent": [150, 150, null],
+    };
+    const secondGame = await PUT(
+      new NextRequest(`http://localhost/api/sessions/${firstGameSaved.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scores: scoresThroughGameTwo }),
+      }),
+      routeContext(["sessions", String(firstGameSaved.id)]),
+    );
+    expect(secondGame.ok).toBe(true);
+    const statsAtEightResponse = await GET(
+      new NextRequest("http://localhost/api/stats"),
+      routeContext(["stats"]),
+    );
+    const { players: statsAtEight } = await statsAtEightResponse.json();
+    expect(
+      statsAtEight.find((row: { id: number }) => row.id === player.id),
+    ).toMatchObject({
+      averageMode: "FIXED",
+      gamesPlayed: 8,
+      mondayAverage: 180,
+      handicapAverage: 120,
+      handicap: 90,
+    });
+
+    const ninthGame = await PUT(
+      new NextRequest(`http://localhost/api/sessions/${firstGameSaved.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scores: {
+            [String(player.id)]: [180, 180, 180],
+            "locked-opponent": [150, 150, 150],
+          },
+        }),
+      }),
+      routeContext(["sessions", String(firstGameSaved.id)]),
+    );
+    expect(ninthGame.ok).toBe(true);
+
+    const statsAtNineResponse = await GET(
+      new NextRequest("http://localhost/api/stats"),
+      routeContext(["stats"]),
+    );
+    const { players: statsAtNine } = await statsAtNineResponse.json();
+    expect(
+      statsAtNine.find((row: { id: number }) => row.id === player.id),
+    ).toMatchObject({
+      gamesPlayed: 9,
+      mondayAverage: 180,
+      handicapAverage: 180,
+      handicap: 36,
+    });
     const playersResponse = await GET(
       new NextRequest("http://localhost/api/players"),
       routeContext(["players"]),
@@ -295,7 +429,7 @@ describe("session save updates MANUAL monday averages", () => {
     expect(
       stats.find((row: { id: number }) => row.id === player.id),
     ).toMatchObject({
-      gamesPlayed: 12,
+      gamesPlayed: 9,
       mondayAverage: 180,
       handicapAverage: 180,
       handicap: 36,

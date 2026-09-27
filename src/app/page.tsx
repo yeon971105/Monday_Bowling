@@ -281,7 +281,7 @@ export default function Home() {
           <ClubTab refreshKey={refreshKey} onChanged={refresh} />
         </div>
         <div hidden={tab !== "history"}>
-          <HistoryTab refreshKey={refreshKey} onChanged={refresh} />
+          <HistoryTab refreshKey={refreshKey} />
         </div>
       </main>
     </div>
@@ -1098,14 +1098,10 @@ function PlayTab({
         team.players.map((player) => String(player.id)),
       ),
     );
-    // Only people checked in on setup, and not already placed on a team.
     return players.filter(
-      (player) =>
-        player.usedAverage != null &&
-        selected.has(player.id) &&
-        !onTeams.has(String(player.id)),
+      (player) => player.usedAverage != null && !onTeams.has(String(player.id)),
     );
-  }, [players, result, selected]);
+  }, [players, result]);
 
   const currentNightPlayers = useMemo(() => {
     if (!result) return participants;
@@ -1619,6 +1615,8 @@ function PlayTab({
               )}
               {sortedPlayers.map((player) => {
                 const locked = player.averageMode === "FIXED";
+                const displayAverage =
+                  avgDraft[player.id] ?? player.usedAverage;
                 const checked = rosterEditing
                   ? removeIds.has(player.id)
                   : selected.has(player.id);
@@ -1648,31 +1646,55 @@ function PlayTab({
                           : ""}
                       </small>
                     </span>
-                    <div className="avg-edit">
-                      <input
-                        type="number"
-                        min={0}
-                        max={300}
-                        disabled={locked || busy}
-                        value={avgDraft[player.id] ?? ""}
-                        onChange={(event) =>
-                          setAvgDraft((prev) => ({
-                            ...prev,
-                            [player.id]: event.target.value,
-                          }))
-                        }
-                      />
+                    {rosterEditing ? (
+                      <div className="avg-edit">
+                        <input
+                          type="number"
+                          min={0}
+                          max={300}
+                          disabled={locked || busy}
+                          value={avgDraft[player.id] ?? ""}
+                          aria-label={`${player.displayName} average`}
+                          onChange={(event) =>
+                            setAvgDraft((prev) => ({
+                              ...prev,
+                              [player.id]: event.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
+                          disabled={busy}
+                          onClick={() =>
+                            locked ? unlockAverage(player) : lockAverage(player)
+                          }
+                        >
+                          {locked ? "Unlock" : "Lock"}
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         type="button"
-                        className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
-                        disabled={busy}
+                        className={`avg-lock-pill ${locked ? "locked" : ""}`}
+                        disabled={
+                          busy ||
+                          displayAverage == null ||
+                          String(displayAverage).trim() === ""
+                        }
+                        aria-pressed={locked}
+                        aria-label={`${locked ? "Unlock" : "Lock"} ${player.displayName} average ${displayAverage ?? ""}`}
                         onClick={() =>
                           locked ? unlockAverage(player) : lockAverage(player)
                         }
                       >
-                        {locked ? "Unlock" : "Lock"}
+                        <span>avg</span>
+                        <strong>{displayAverage ?? "—"}</strong>
+                        {locked ? (
+                          <span className="avg-lock-mark">🔒</span>
+                        ) : null}
                       </button>
-                    </div>
+                    )}
                   </div>
                 );
               })}
@@ -1742,7 +1764,7 @@ function PlayTab({
             </div>
           )}
 
-          <div className="card" style={{ marginTop: 16 }}>
+          <div className="card setup-generate-card" style={{ marginTop: 16 }}>
             <h3>Generate teams</h3>
             <p className="muted">
               Confirm who’s checked in, then choose Balance or Manual.
@@ -1887,6 +1909,8 @@ function PlayTab({
               )}
               {sortedPlayers.map((player) => {
                 const locked = player.averageMode === "FIXED";
+                const displayAverage =
+                  avgDraft[player.id] ?? player.usedAverage;
                 const checked = rosterEditing
                   ? removeIds.has(player.id)
                   : selected.has(player.id);
@@ -1916,31 +1940,55 @@ function PlayTab({
                           : ""}
                       </small>
                     </span>
-                    <div className="avg-edit">
-                      <input
-                        type="number"
-                        min={0}
-                        max={300}
-                        disabled={locked || busy}
-                        value={avgDraft[player.id] ?? ""}
-                        onChange={(event) =>
-                          setAvgDraft((prev) => ({
-                            ...prev,
-                            [player.id]: event.target.value,
-                          }))
-                        }
-                      />
+                    {rosterEditing ? (
+                      <div className="avg-edit">
+                        <input
+                          type="number"
+                          min={0}
+                          max={300}
+                          disabled={locked || busy}
+                          value={avgDraft[player.id] ?? ""}
+                          aria-label={`${player.displayName} average`}
+                          onChange={(event) =>
+                            setAvgDraft((prev) => ({
+                              ...prev,
+                              [player.id]: event.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
+                          disabled={busy}
+                          onClick={() =>
+                            locked ? unlockAverage(player) : lockAverage(player)
+                          }
+                        >
+                          {locked ? "Unlock" : "Lock"}
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         type="button"
-                        className={`button small ghost-toggle ${locked ? "unlock-btn" : "lock-btn"}`}
-                        disabled={busy}
+                        className={`avg-lock-pill ${locked ? "locked" : ""}`}
+                        disabled={
+                          busy ||
+                          displayAverage == null ||
+                          String(displayAverage).trim() === ""
+                        }
+                        aria-pressed={locked}
+                        aria-label={`${locked ? "Unlock" : "Lock"} ${player.displayName} average ${displayAverage ?? ""}`}
                         onClick={() =>
                           locked ? unlockAverage(player) : lockAverage(player)
                         }
                       >
-                        {locked ? "Unlock" : "Lock"}
+                        <span>avg</span>
+                        <strong>{displayAverage ?? "—"}</strong>
+                        {locked ? (
+                          <span className="avg-lock-mark">🔒</span>
+                        ) : null}
                       </button>
-                    </div>
+                    )}
                   </div>
                 );
               })}
@@ -1950,7 +1998,7 @@ function PlayTab({
             </div>
           </div>
 
-          <div className="card" style={{ marginTop: 16 }}>
+          <div className="card setup-generate-card" style={{ marginTop: 16 }}>
             <h3>Generate teams for Game {resetTargetGame + 1}</h3>
             <p className="muted">
               Confirm who’s checked in, then choose Balance or Manual.
@@ -2142,7 +2190,7 @@ function PlayTab({
                       <h3>
                         {team.name}
                         <small className="muted">
-                          avg {series?.averageSum ?? 0}
+                          Total {series?.averageSum ?? 0}
                         </small>
                       </h3>
                     </div>
@@ -2282,15 +2330,25 @@ function PlayTab({
             })}
           </div>
 
-          <div className="card nav-card" style={{ marginTop: 16 }}>
+          {!gameResult.complete ? (
+            <p className="muted score-need-notice">
+              {scoresNeeded.length
+                ? scoresNeeded.length <= 4
+                  ? `Need scores for ${scoresNeeded.join(", ")}.`
+                  : `Need scores for ${scoresNeeded.length} players.`
+                : "Enter every score to continue."}
+            </p>
+          ) : null}
+          <div
+            className="card nav-card game-nav-card"
+            style={{ marginTop: 16 }}
+          >
             <div className="game-nav">
-              <button
-                className="button secondary"
-                disabled={gameIndex === 0}
-                onClick={goPreviousGame}
-              >
-                Previous
-              </button>
+              {gameIndex > 0 ? (
+                <button className="button secondary" onClick={goPreviousGame}>
+                  Previous
+                </button>
+              ) : null}
               <div className="game-nav-right">
                 <button
                   className="button secondary"
@@ -2319,15 +2377,6 @@ function PlayTab({
                 )}
               </div>
             </div>
-            {!gameResult.complete ? (
-              <p className="muted" style={{ margin: "10px 0 0" }}>
-                {scoresNeeded.length
-                  ? scoresNeeded.length <= 4
-                    ? `Need scores for ${scoresNeeded.join(", ")}.`
-                    : `Need scores for ${scoresNeeded.length} players.`
-                  : "Enter every score to continue."}
-              </p>
-            ) : null}
           </div>
         </>
       )}
@@ -2641,8 +2690,8 @@ function PlayTab({
             <hr style={{ margin: "18px 0", borderColor: "var(--line)" }} />
             {availableToAdd.length === 0 ? (
               <p className="muted">
-                Everyone checked in is already on a team. Check in more people
-                on the setup screen, or add a new name above.
+                No unassigned roster players with an average. Add a new player
+                above if needed.
               </p>
             ) : (
               <>
@@ -2975,10 +3024,11 @@ function ClubTab({
     <>
       <div className="page-title">
         <div>
-          <h2>Club members</h2>
-          <p>
-            ${data?.duesAmount ?? 20} on the 9th from members, $
-            {data?.ticketAmount ?? 10} out per scratch ticket.
+          <h2>Club</h2>
+          <p>Club overview. Pot, members, and payouts.</p>
+          <p className="muted club-policy-copy">
+            ${data?.duesAmount ?? 20} on the 9th from members · $
+            {data?.ticketAmount ?? 10} per scratch ticket.
           </p>
         </div>
       </div>
@@ -3022,7 +3072,11 @@ function ClubTab({
             {membersEditing ? "Done" : "Edit"}
           </button>
         </div>
-        {data?.members.length ? (
+        {!data ? (
+          <p style={{ marginTop: 12 }}>
+            {error ? "Could not load members." : "Loading members…"}
+          </p>
+        ) : data.members.length ? (
           membersEditing ? (
             <div className="player-stats-list" style={{ marginTop: 12 }}>
               {data.members.map((member) => (
@@ -3183,7 +3237,11 @@ function ClubTab({
             </button>
           </>
         ) : null}
-        {paidOut.length ? (
+        {!data ? (
+          <p style={{ marginTop: 12 }}>
+            {error ? "Could not load payouts." : "Loading payouts…"}
+          </p>
+        ) : paidOut.length ? (
           <div className="player-stats-list" style={{ marginTop: 12 }}>
             {paidOut.map((group) => {
               const undoIds = group.entries
@@ -3248,7 +3306,11 @@ function ClubTab({
         <p className="muted" style={{ margin: "4px 0 0" }}>
           In and out by day. Who got paid is in Paid out.
         </p>
-        {ledgerDays.length ? (
+        {!data ? (
+          <p style={{ marginTop: 12 }}>
+            {error ? "Could not load the ledger." : "Loading ledger…"}
+          </p>
+        ) : ledgerDays.length ? (
           <div className="player-stats-list" style={{ marginTop: 12 }}>
             {ledgerDays.map((day) => (
               <div className="player-stat-row" key={day.date}>
@@ -3282,13 +3344,7 @@ function ClubTab({
   );
 }
 
-function HistoryTab({
-  refreshKey,
-  onChanged,
-}: {
-  refreshKey: number;
-  onChanged: () => void;
-}) {
+function HistoryTab({ refreshKey }: { refreshKey: number }) {
   const [sessions, setSessions] = useState<SavedSession[]>([]);
   const [stats, setStats] = useState<PlayerStat[]>([]);
   const [statsSort, setStatsSort] = useState<{
@@ -3296,11 +3352,7 @@ function HistoryTab({
     dir: "asc" | "desc";
   }>({ key: "winRate", dir: "desc" });
   const [openId, setOpenId] = useState<number>();
-  const [editingId, setEditingId] = useState<number>();
-  const [editScores, setEditScores] = useState<ScoreMap>({});
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -3315,6 +3367,19 @@ function HistoryTab({
   useEffect(() => {
     load().catch((err) => setError(err.message));
   }, [load, refreshKey]);
+
+  const recentSessions = useMemo(() => {
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setMonth(cutoff.getMonth() - 3);
+    if (cutoff.getDate() !== now.getDate()) cutoff.setDate(0);
+    const cutoffDate = localDateInputValue(cutoff);
+    const todayDate = localDateInputValue(now);
+    return sessions.filter(
+      (session) =>
+        session.sessionDate >= cutoffDate && session.sessionDate <= todayDate,
+    );
+  }, [sessions]);
 
   const sortedStats = useMemo(() => {
     const rows = [...stats];
@@ -3361,6 +3426,23 @@ function HistoryTab({
     return statsSort.dir === "asc" ? " ↑" : " ↓";
   };
 
+  const mobileSortValue = `${statsSort.key}:${statsSort.dir}`;
+  const changeMobileSort = (value: string) => {
+    const [key, dir] = value.split(":") as [
+      typeof statsSort.key,
+      typeof statsSort.dir,
+    ];
+    setStatsSort({ key, dir });
+  };
+  const sortLabels = {
+    name: "Player",
+    games: "Games",
+    handicap: "Handicap",
+    winRate: "Win %",
+    monday: "Monday avg",
+    used: "Used avg",
+  };
+
   const clubIds = useMemo(
     () =>
       new Set(
@@ -3370,92 +3452,6 @@ function HistoryTab({
       ),
     [stats],
   );
-
-  const startEdit = (session: SavedSession) => {
-    setEditingId(session.id);
-    setOpenId(session.id);
-    setEditScores(structuredClone(session.scores ?? {}) as ScoreMap);
-  };
-
-  const setEditScore = (playerId: string, gameIndex: number, value: string) => {
-    setEditScores((prev) => {
-      const current = [...(prev[playerId] ?? [null, null, null])] as [
-        number | null,
-        number | null,
-        number | null,
-      ];
-      current[gameIndex] =
-        value === "" ? null : Math.max(0, Math.min(300, Number(value) || 0));
-      return { ...prev, [playerId]: current };
-    });
-  };
-
-  const saveEdit = async (sessionId: number) => {
-    setBusy(true);
-    setMessage("");
-    try {
-      const updated = await api<{
-        id: number;
-        sessionDate: string;
-        scores: ScoreMap;
-        results: SessionTeamResult[];
-        scratchWinners: ScratchWinner[];
-        lastGamePrize: LastGamePrize;
-        finalTeams: SavedSession["finalTeams"];
-      }>(`/api/sessions/${sessionId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scores: editScores }),
-      });
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.id === sessionId
-            ? {
-                ...session,
-                sessionDate: updated.sessionDate,
-                scores: updated.scores,
-                results: updated.results,
-                scratchWinners: updated.scratchWinners,
-                lastGamePrize: updated.lastGamePrize,
-              }
-            : session,
-        ),
-      );
-      setEditingId(undefined);
-      setMessage("Session updated.");
-      const statsPayload = await api<{ players: PlayerStat[] }>("/api/stats");
-      setStats(statsPayload.players);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeSession = async (session: SavedSession) => {
-    if (
-      !confirm(
-        `Delete session ${session.sessionDate}? Scratch tickets from that night will also come off the Club pot.`,
-      )
-    )
-      return;
-    setBusy(true);
-    setMessage("");
-    try {
-      await api(`/api/sessions/${session.id}`, { method: "DELETE" });
-      setSessions((prev) => prev.filter((entry) => entry.id !== session.id));
-      if (openId === session.id) setOpenId(undefined);
-      if (editingId === session.id) setEditingId(undefined);
-      setMessage("Session deleted.");
-      onChanged();
-      const statsPayload = await api<{ players: PlayerStat[] }>("/api/stats");
-      setStats(statsPayload.players);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>
@@ -3468,107 +3464,230 @@ function HistoryTab({
         </div>
       </div>
       {error && <div className="notice error">{error}</div>}
-      {message && <div className="notice success">{message}</div>}
 
       <div className="card">
         <h3>Player stats</h3>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "name" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("name")}
+        <div className="stats-mobile-toolbar">
+          <p>
+            Sorted by <strong>{sortLabels[statsSort.key]}</strong>
+            {sortMark(statsSort.key)}
+          </p>
+          <label className="stats-sort-control">
+            Change sort
+            <select
+              className="stats-sort-select"
+              aria-label="Change sort"
+              value={mobileSortValue}
+              onChange={(event) => changeMobileSort(event.target.value)}
+            >
+              <option value="winRate:desc">Win % ↓</option>
+              <option value="winRate:asc">Win % ↑</option>
+              <option value="games:desc">Games ↓</option>
+              <option value="games:asc">Games ↑</option>
+              <option value="handicap:desc">Handicap ↓</option>
+              <option value="handicap:asc">Handicap ↑</option>
+              <option value="monday:desc">Monday avg ↓</option>
+              <option value="monday:asc">Monday avg ↑</option>
+              <option value="used:desc">Used avg ↓</option>
+              <option value="used:asc">Used avg ↑</option>
+              <option value="name:asc">Player A–Z</option>
+              <option value="name:desc">Player Z–A</option>
+            </select>
+          </label>
+        </div>
+        <div className="stats-desktop">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th
+                    aria-sort={
+                      statsSort.key === "name"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Player{sortMark("name")}
-                  </button>
-                </th>
-                <th>Games W-L</th>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "games" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("games")}
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "name" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("name")}
+                    >
+                      Player{sortMark("name")}
+                    </button>
+                  </th>
+                  <th>Games W-L</th>
+                  <th
+                    aria-sort={
+                      statsSort.key === "games"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Games{sortMark("games")}
-                  </button>
-                </th>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "handicap" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("handicap")}
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "games" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("games")}
+                    >
+                      Games{sortMark("games")}
+                    </button>
+                  </th>
+                  <th
+                    aria-sort={
+                      statsSort.key === "handicap"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Handicap{sortMark("handicap")}
-                  </button>
-                </th>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "winRate" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("winRate")}
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "handicap" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("handicap")}
+                    >
+                      Handicap{sortMark("handicap")}
+                    </button>
+                  </th>
+                  <th
+                    aria-sort={
+                      statsSort.key === "winRate"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Win %{sortMark("winRate")}
-                  </button>
-                </th>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "monday" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("monday")}
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "winRate" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("winRate")}
+                    >
+                      Win %{sortMark("winRate")}
+                    </button>
+                  </th>
+                  <th
+                    aria-sort={
+                      statsSort.key === "monday"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Monday avg{sortMark("monday")}
-                  </button>
-                </th>
-                <th>
-                  <button
-                    type="button"
-                    className={`sort-th ${statsSort.key === "used" ? "active" : ""}`}
-                    onClick={() => toggleStatsSort("used")}
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "monday" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("monday")}
+                    >
+                      Monday avg{sortMark("monday")}
+                    </button>
+                  </th>
+                  <th
+                    aria-sort={
+                      statsSort.key === "used"
+                        ? statsSort.dir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
                   >
-                    Used avg{sortMark("used")}
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedStats.map((player) => (
-                <tr key={player.id}>
-                  <td>
-                    <NameWithScratch
-                      name={player.displayName}
-                      on={player.scratchPool}
-                    />
-                    <br />
-                    <small className="muted">{player.averageMode}</small>
-                  </td>
-                  <td>
+                    <button
+                      type="button"
+                      className={`sort-th ${statsSort.key === "used" ? "active" : ""}`}
+                      onClick={() => toggleStatsSort("used")}
+                    >
+                      Used avg{sortMark("used")}
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedStats.map((player) => (
+                  <tr key={player.id}>
+                    <td>
+                      <NameWithScratch
+                        name={player.displayName}
+                        on={player.scratchPool}
+                      />
+                      <br />
+                      <small className="muted">{player.averageMode}</small>
+                    </td>
+                    <td>
+                      {player.wins}-{player.losses}
+                      {player.ties ? `-${player.ties}` : ""}
+                    </td>
+                    <td>{player.gamesPlayed}</td>
+                    <td>{fmt(player.handicap)}</td>
+                    <td>
+                      {player.winRate == null
+                        ? "—"
+                        : `${Math.round(player.winRate * 100)}%`}
+                    </td>
+                    <td>{fmt(player.mondayAverage)}</td>
+                    <td>{fmt(player.usedAverage)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="stats-mobile-list">
+          {sortedStats.map((player) => (
+            <article className="stats-mobile-card" key={player.id}>
+              <div className="stats-mobile-name">
+                <NameWithScratch
+                  name={player.displayName}
+                  on={player.scratchPool}
+                />
+                <small className="muted">{player.averageMode}</small>
+              </div>
+              <dl className="stats-mobile-grid">
+                <div>
+                  <dt>Games W-L</dt>
+                  <dd>
                     {player.wins}-{player.losses}
                     {player.ties ? `-${player.ties}` : ""}
-                  </td>
-                  <td>{player.gamesPlayed}</td>
-                  <td>{fmt(player.handicap)}</td>
-                  <td>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Games</dt>
+                  <dd>{player.gamesPlayed}</dd>
+                </div>
+                <div>
+                  <dt>Handicap</dt>
+                  <dd>{fmt(player.handicap)}</dd>
+                </div>
+                <div>
+                  <dt>Win %</dt>
+                  <dd>
                     {player.winRate == null
                       ? "—"
                       : `${Math.round(player.winRate * 100)}%`}
-                  </td>
-                  <td>{fmt(player.mondayAverage)}</td>
-                  <td>{fmt(player.usedAverage)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Monday avg</dt>
+                  <dd>{fmt(player.mondayAverage)}</dd>
+                </div>
+                <div>
+                  <dt>Used avg</dt>
+                  <dd>{fmt(player.usedAverage)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
         </div>
         {!stats.length && <div className="empty">No player stats yet.</div>}
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h3>Weekly sessions</h3>
-        {sessions.length ? (
-          sessions.map((session) => {
+        {recentSessions.length ? (
+          recentSessions.map((session) => {
             const winner = session.results?.find((result) => result.won);
             const checkedIn =
               session.attendees?.length ||
@@ -3576,7 +3695,6 @@ function HistoryTab({
                 (sum, team) => sum + team.players.length,
                 0,
               );
-            const isEditing = editingId === session.id;
             const open = openId === session.id;
             return (
               <div key={session.id} className="history-session">
@@ -3598,30 +3716,6 @@ function HistoryTab({
                       {open ? " · hide" : " · details"}
                     </span>
                   </button>
-                  <div className="history-actions">
-                    {isEditing ? (
-                      <button
-                        type="button"
-                        className="button small secondary"
-                        disabled={busy}
-                        onClick={() => removeSession(session)}
-                      >
-                        Delete
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="button small secondary"
-                        disabled={busy}
-                        onClick={() => {
-                          setOpenId(session.id);
-                          startEdit(session);
-                        }}
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </div>
                 </div>
                 {open && (
                   <div className="history-detail">
@@ -3663,13 +3757,11 @@ function HistoryTab({
                               </span>
                             </div>
                             {team.players.map((player) => {
-                              const games = isEditing
-                                ? (editScores[player.id] ?? [null, null, null])
-                                : (session.scores?.[player.id] ?? [
-                                    null,
-                                    null,
-                                    null,
-                                  ]);
+                              const games = session.scores?.[player.id] ?? [
+                                null,
+                                null,
+                                null,
+                              ];
                               return (
                                 <div className="player-chip" key={player.id}>
                                   <div className="top">
@@ -3677,50 +3769,25 @@ function HistoryTab({
                                       name={player.name}
                                       on={clubIds.has(String(player.id))}
                                     />
-                                    {!isEditing && (
-                                      <span className="muted">
-                                        tot {playerSeriesTotal(games)}
-                                      </span>
-                                    )}
+                                    <span className="muted">
+                                      tot {playerSeriesTotal(games)}
+                                    </span>
                                   </div>
-                                  {isEditing ? (
-                                    <div className="edit-score-row">
-                                      {[0, 1, 2].map((gameIndex) => (
-                                        <label key={gameIndex}>
+                                  <div className="player-score-grid compact">
+                                    {[0, 1, 2].map((gameIndex) => (
+                                      <div
+                                        className="player-score-cell"
+                                        key={gameIndex}
+                                      >
+                                        <span className="muted">
                                           G{gameIndex + 1}
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            max={300}
-                                            value={games[gameIndex] ?? ""}
-                                            onChange={(event) =>
-                                              setEditScore(
-                                                player.id,
-                                                gameIndex,
-                                                event.target.value,
-                                              )
-                                            }
-                                          />
-                                        </label>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <div className="player-score-grid compact">
-                                      {[0, 1, 2].map((gameIndex) => (
-                                        <div
-                                          className="player-score-cell"
-                                          key={gameIndex}
-                                        >
-                                          <span className="muted">
-                                            G{gameIndex + 1}
-                                          </span>
-                                          <strong>
-                                            {games[gameIndex] ?? "—"}
-                                          </strong>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
+                                        </span>
+                                        <strong>
+                                          {games[gameIndex] ?? "—"}
+                                        </strong>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -3771,30 +3838,17 @@ function HistoryTab({
                         {` · $${session.lastGamePrize.clubPotAdded} to Club pot`}
                       </p>
                     ) : null}
-                    {isEditing && (
-                      <div className="actions" style={{ marginTop: 12 }}>
-                        <button
-                          className="button"
-                          disabled={busy}
-                          onClick={() => saveEdit(session.id)}
-                        >
-                          Save changes
-                        </button>
-                        <button
-                          className="button secondary"
-                          onClick={() => setEditingId(undefined)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
             );
           })
         ) : (
-          <div className="empty">No saved sessions yet.</div>
+          <div className="empty">
+            {sessions.length
+              ? "No sessions in the last three months."
+              : "No saved sessions yet."}
+          </div>
         )}
       </div>
     </>

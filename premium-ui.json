@@ -1,0 +1,26 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["src"],
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": [
+    "Table Selection",
+    "Select/Listbox",
+    "Date",
+    "Form",
+    "Scrollbar",
+    "Toast",
+    "CRUD"
+  ],
+  "ownership": {
+    "Select/Listbox": "native",
+    "Date": "native"
+  },
+  "requiredCommands": ["format", "lint", "typecheck", "unit", "build"],
+  "commands": {
+    "format": "npm run format:check",
+    "lint": "npm run lint",
+    "typecheck": "npm run typecheck",
+    "unit": "npm test",
+    "build": "npm run build"
+  }
+}
