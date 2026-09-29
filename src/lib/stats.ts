@@ -7,7 +7,7 @@ import {
   type ScoreMap,
   type StoredGameResult,
 } from "./scoring";
-import type { PlayerStat, SessionTeamResult } from "./types";
+import type { Player, PlayerStat, SessionTeamResult } from "./types";
 
 type SessionRow = {
   id: number;
@@ -218,10 +218,13 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
 
       const totalPins = games.reduce((sum, value) => sum + value, 0);
       const mondayAverage = mondayAverageFromScores(games);
-      const handicapAverage =
-        games.length >= MONDAY_AVG_MIN_GAMES
-          ? mondayAverage
-          : player.usedAverage;
+      const handicapAverage = shouldUseMondayAverage(
+        player,
+        games.length,
+        mondayAverage,
+      )
+        ? mondayAverage
+        : player.usedAverage;
       const decided = wins + losses;
       return {
         id: player.id,
@@ -249,7 +252,22 @@ export function computePlayerStats(db = getDb()): PlayerStat[] {
 
 export const MONDAY_AVG_MIN_GAMES = 9;
 
-/** At 9 total games, Monday history replaces the source average and any lock. */
+function shouldUseMondayAverage(
+  player: Player,
+  gamesPlayed: number,
+  mondayAverage: number | null,
+): boolean {
+  return (
+    mondayAverage !== null &&
+    (gamesPlayed >= MONDAY_AVG_MIN_GAMES ||
+      (gamesPlayed >= 5 &&
+        (player.averageMode === "FIXED" || player.averageMode === "AUTO") &&
+        player.usedAverage !== null &&
+        mondayAverage - player.usedAverage >= 15))
+  );
+}
+
+/** At 9 games, or at 5 with a 15-point gain, Monday history replaces the source average. */
 export function refreshManualAveragesFromHistory(db = getDb()): {
   updated: number;
   unlocked: number;
@@ -263,7 +281,7 @@ export function refreshManualAveragesFromHistory(db = getDb()): {
     const player = players.find((entry) => entry.id === stat.id);
     if (!player || player.archived) continue;
 
-    if (stat.gamesPlayed >= MONDAY_AVG_MIN_GAMES) {
+    if (shouldUseMondayAverage(player, stat.gamesPlayed, stat.mondayAverage)) {
       const changed =
         player.averageMode !== "MANUAL" ||
         player.manualAverage !== stat.mondayAverage ||

@@ -235,7 +235,7 @@ describe("session save updates MANUAL monday averages", () => {
         body: JSON.stringify({
           displayName: "Locked Bowler",
           averageMode: "FIXED",
-          fixedAverage: 120,
+          fixedAverage: 170,
         }),
       }),
       routeContext(["players"]),
@@ -248,18 +248,18 @@ describe("session save updates MANUAL monday averages", () => {
           {
             id: String(player.id),
             name: player.displayName,
-            usedAverage: 120,
+            usedAverage: 170,
             averageMode: "FIXED",
-            handicap: 90,
-            projectedScore: 210,
+            handicap: 45,
+            projectedScore: 215,
           },
         ],
         metrics: {
-          scratchTotal: 120,
-          handicapTotal: 90,
-          projectedTotal: 210,
-          scratchPerPlayer: 120,
-          projectedPerPlayer: 210,
+          scratchTotal: 170,
+          handicapTotal: 45,
+          projectedTotal: 215,
+          scratchPerPlayer: 170,
+          projectedPerPlayer: 215,
           tierCounts: { A: 1, B: 0, C: 0, D: 0 },
         },
       },
@@ -348,8 +348,8 @@ describe("session save updates MANUAL monday averages", () => {
       averageMode: "FIXED",
       gamesPlayed: 7,
       mondayAverage: 180,
-      handicapAverage: 120,
-      handicap: 90,
+      handicapAverage: 170,
+      handicap: 45,
     });
 
     const scoresThroughGameTwo = {
@@ -376,8 +376,8 @@ describe("session save updates MANUAL monday averages", () => {
       averageMode: "FIXED",
       gamesPlayed: 8,
       mondayAverage: 180,
-      handicapAverage: 120,
-      handicap: 90,
+      handicapAverage: 170,
+      handicap: 45,
     });
 
     const ninthGame = await PUT(
@@ -433,6 +433,110 @@ describe("session save updates MANUAL monday averages", () => {
       mondayAverage: 180,
       handicapAverage: 180,
       handicap: 36,
+    });
+  });
+
+  it("switches locked and league averages at five games only when Monday is at least 15 higher", async () => {
+    const { getDb } = await import("@/lib/db");
+    const { computePlayerStats, refreshManualAveragesFromHistory } =
+      await import("@/lib/stats");
+    const db = getDb();
+    const addPlayer = (name: string, mode: string, average: number) =>
+      Number(
+        db
+          .prepare(
+            `INSERT INTO players(display_name, average_mode, league_average, manual_average, fixed_average)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            name,
+            mode,
+            mode === "AUTO" ? average : null,
+            mode === "MANUAL" ? average : null,
+            mode === "FIXED" ? average : null,
+          ).lastInsertRowid,
+      );
+    const locked = addPlayer("Early locked", "FIXED", 120);
+    const league = addPlayer("Early league", "AUTO", 120);
+    const belowGap = addPlayer("Early below gap", "FIXED", 121);
+    const manual = addPlayer("Early manual", "MANUAL", 120);
+    const ids = [locked, league, belowGap, manual];
+    const saveScores = (scores: number[]) =>
+      Number(
+        db
+          .prepare(
+            `INSERT INTO sessions(session_date, mode, team_count, target_team_size, seed,
+              handicap_settings_json, attendees_json, absent_ids_json, generated_teams_json,
+              final_teams_json, fairness_json, scores_json)
+             VALUES ('2026-08-03', 'BALANCED', 2, 2, 'early-average', '{}', '[]', '[]',
+              '[]', '[]', '{}', ?)`,
+          )
+          .run(
+            JSON.stringify(Object.fromEntries(ids.map((id) => [id, scores]))),
+          ).lastInsertRowid,
+      );
+    saveScores([135, 135, 135]);
+    const secondSession = saveScores([135]);
+    refreshManualAveragesFromHistory(db);
+    expect(
+      computePlayerStats(db).find((row) => row.id === locked),
+    ).toMatchObject({
+      gamesPlayed: 4,
+      usedAverage: 120,
+      handicapAverage: 120,
+    });
+
+    db.prepare("UPDATE sessions SET scores_json=? WHERE id=?").run(
+      JSON.stringify(Object.fromEntries(ids.map((id) => [id, [135, 135]]))),
+      secondSession,
+    );
+    const statsAtFive = computePlayerStats(db);
+    expect(statsAtFive.find((row) => row.id === locked)).toMatchObject({
+      gamesPlayed: 5,
+      mondayAverage: 135,
+      handicapAverage: 135,
+    });
+    expect(statsAtFive.find((row) => row.id === league)?.handicapAverage).toBe(
+      135,
+    );
+    expect(
+      statsAtFive.find((row) => row.id === belowGap)?.handicapAverage,
+    ).toBe(121);
+    expect(statsAtFive.find((row) => row.id === manual)?.handicapAverage).toBe(
+      120,
+    );
+
+    expect(refreshManualAveragesFromHistory(db)).toMatchObject({
+      updated: 2,
+      unlocked: 1,
+    });
+    const rows = db
+      .prepare(
+        "SELECT id, average_mode, fixed_average, manual_average FROM players WHERE id IN (?,?,?,?)",
+      )
+      .all(...ids) as Array<{
+      id: number;
+      average_mode: string;
+      fixed_average: number | null;
+      manual_average: number | null;
+    }>;
+    const byId = (id: number) => rows.find((row) => row.id === id);
+    expect(byId(locked)).toMatchObject({
+      average_mode: "MANUAL",
+      fixed_average: null,
+      manual_average: 135,
+    });
+    expect(byId(league)).toMatchObject({
+      average_mode: "MANUAL",
+      manual_average: 135,
+    });
+    expect(byId(belowGap)).toMatchObject({
+      average_mode: "FIXED",
+      fixed_average: 121,
+    });
+    expect(byId(manual)).toMatchObject({
+      average_mode: "MANUAL",
+      manual_average: 120,
     });
   });
 });
