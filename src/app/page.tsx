@@ -805,7 +805,12 @@ function PlayTab({
     setBusy(true);
     setMessage("");
     try {
-      const playerList = options?.playersOverride ?? participants;
+      const playerList = (options?.playersOverride ?? participants).map(
+        (player) => ({
+          ...player,
+          payingMember: scratchIds.has(Number(player.id)),
+        }),
+      );
       if (playerList.length < teamCount)
         throw new Error(`Select at least ${teamCount} players with averages`);
       const nextSeed = newSeed();
@@ -2596,8 +2601,8 @@ function PlayTab({
                   : "Game 1"}
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
-              Balance: avg 150+ / under 150 pools. Manual: start with empty
-              teams and place each player.
+              Balance: AVG below 140 / 140–180 / above 180 pools. Manual: start
+              with empty teams and place each player.
             </p>
             <div className="actions" style={{ marginTop: 16 }}>
               <button

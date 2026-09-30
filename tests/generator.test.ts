@@ -102,6 +102,41 @@ describe("team generator", () => {
     expect(generateTeams(options).teams).toEqual(generateTeams(options).teams);
   });
 
+  it.each([
+    { count: 7, teamCount: 2, paying: 2 },
+    { count: 13, teamCount: 2, paying: 5 },
+    { count: 13, teamCount: 3, paying: 5 },
+    { count: 14, teamCount: 2, paying: 7 },
+    { count: 13, teamCount: 3, paying: 12 },
+  ])(
+    "balances $paying paying members across $teamCount teams of $count",
+    ({ count, teamCount, paying }) => {
+      const players = group(count).map((player, index) => ({
+        ...player,
+        payingMember: index < paying,
+      }));
+      for (let seed = 0; seed < 12; seed++) {
+        const result = generateTeams({
+          players,
+          teamCount,
+          mode: "BALANCED",
+          seed: String(seed),
+        });
+        const sizes = result.teams.map((team) => team.players.length);
+        const payingCounts = result.teams.map(
+          (team) => team.players.filter((player) => player.payingMember).length,
+        );
+        expect(ids(result).sort()).toEqual(
+          players.map((player) => player.id).sort(),
+        );
+        expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
+        expect(
+          Math.max(...payingCounts) - Math.min(...payingCounts),
+        ).toBeLessThanOrEqual(1);
+      }
+    },
+  );
+
   it("different seeds reshuffle partner combinations", () => {
     const players = group(12);
     const combos = new Set<string>();

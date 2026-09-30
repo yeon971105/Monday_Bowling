@@ -42,6 +42,7 @@ export interface GeneratorPlayer {
   averageMode: AverageMode;
   handicap: number;
   projectedScore: number;
+  payingMember?: boolean;
   guest?: boolean;
   tier?: SkillTier;
 }

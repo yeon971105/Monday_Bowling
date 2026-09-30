@@ -169,16 +169,32 @@ function balancedByAverageSplit(
     random,
   );
   const teams = sizes.map(() => [] as GeneratorPlayer[]);
+  const payingCount = players.filter((player) => player.payingMember).length;
+  const base = Math.floor(payingCount / teams.length);
+  const payingSlots = sizes.map(() => base);
+  const extra = payingCount % teams.length;
+  if (extra) {
+    const eligible = shuffle(
+      sizes
+        .map((size, index) => ({ size, index }))
+        .filter(({ size }) => size > base),
+      random,
+    );
+    for (const { index } of eligible.slice(0, extra)) payingSlots[index]++;
+  }
+  const payingPlaced = sizes.map(() => 0);
+  const canPlace = (index: number, player: GeneratorPlayer) =>
+    player.payingMember
+      ? payingPlaced[index] < payingSlots[index]
+      : teams[index].length - payingPlaced[index] <
+        sizes[index] - payingSlots[index];
 
   const snakeDeal = (pool: GeneratorPlayer[]) => {
     let index = 0;
     let direction = 1;
     for (const player of pool) {
       let attempts = 0;
-      while (
-        teams[index].length >= sizes[index] &&
-        attempts++ < teams.length * 2
-      ) {
+      while (!canPlace(index, player) && attempts++ < teams.length * 2) {
         index += direction;
         if (index >= teams.length) {
           index = teams.length - 1;
@@ -188,7 +204,9 @@ function balancedByAverageSplit(
           direction = 1;
         }
       }
+      if (!canPlace(index, player)) throw new Error("Cannot place player");
       teams[index].push(player);
+      if (player.payingMember) payingPlaced[index]++;
       if (teams.length === 1) continue;
       index += direction;
       if (index >= teams.length) {
@@ -205,11 +223,6 @@ function balancedByAverageSplit(
   snakeDeal(mids);
   snakeDeal(lows);
 
-  const overflow = teams.flatMap((team, i) => team.splice(sizes[i]));
-  for (const player of overflow) {
-    const index = teams.findIndex((team, i) => team.length < sizes[i]);
-    if (index >= 0) teams[index].push(player);
-  }
   return teams;
 }
 
@@ -258,8 +271,21 @@ export function generateTeams(options: {
     }
     selected = best;
   } else {
-    // BALANCED: avg <140 / 140–<181 / ≥181 pools, random within each.
-    selected = balancedByAverageSplit(players, sizes, random);
+    let best = balancedByAverageSplit(players, sizes, random);
+    let bestFairness = scoreTeams(best, pairs, false);
+    for (let attempt = 1; attempt < 32; attempt++) {
+      const candidate = balancedByAverageSplit(players, sizes, random);
+      const fairness = scoreTeams(candidate, pairs, false);
+      if (
+        fairness.scratchSpread < bestFairness.scratchSpread ||
+        (fairness.scratchSpread === bestFairness.scratchSpread &&
+          fairness.projectedSpread < bestFairness.projectedSpread)
+      ) {
+        best = candidate;
+        bestFairness = fairness;
+      }
+    }
+    selected = best;
   }
 
   const fairness = scoreTeams(selected, pairs, mode === "BALANCED_REPEATS");
