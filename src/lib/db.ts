@@ -191,6 +191,11 @@ function migrateScratchMoney(db: SqliteDb): void {
     db.exec(
       "ALTER TABLE players ADD COLUMN scratch_pool INTEGER NOT NULL DEFAULT 0",
     );
+  const addingDuesStartMonth = !playerColumns.includes(
+    "scratch_dues_start_month",
+  );
+  if (addingDuesStartMonth)
+    db.exec("ALTER TABLE players ADD COLUMN scratch_dues_start_month TEXT");
   db.exec(`
     CREATE TABLE IF NOT EXISTS scratch_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,6 +219,25 @@ function migrateScratchMoney(db: SqliteDb): void {
       ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'last_game_ticket';
   `);
   migrateScratchLedgerKinds(db);
+  if (addingDuesStartMonth) {
+    // This member joined Sep 29; the old code charged September dues on signup.
+    db.exec(`
+      UPDATE players SET scratch_dues_start_month = '2026-10'
+      WHERE id = 17 AND scratch_pool = 1
+        AND EXISTS (
+          SELECT 1 FROM scratch_ledger WHERE id = 1691
+            AND kind = 'dues' AND player_id = 17 AND amount = 20
+            AND month_key = '2026-09' AND created_at = '2026-09-30 00:20:57'
+        );
+      DELETE FROM scratch_ledger WHERE id = 1691
+        AND kind = 'dues' AND player_id = 17 AND amount = 20
+        AND month_key = '2026-09' AND created_at = '2026-09-30 00:20:57'
+        AND EXISTS (
+          SELECT 1 FROM players WHERE id = 17
+            AND scratch_dues_start_month = '2026-10'
+        );
+    `);
+  }
 }
 
 function migrateScratchLedgerKinds(db: SqliteDb): void {

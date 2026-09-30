@@ -93,16 +93,26 @@ type LedgerRow = {
   note: string;
 };
 
-function poolMembers(db: SqliteDb): ScratchPoolMember[] {
+type PoolMember = ScratchPoolMember & { duesStartMonth: string | null };
+
+function poolMembers(db: SqliteDb): PoolMember[] {
   return (
     db
       .prepare(
-        `SELECT id, display_name name FROM players
+        `SELECT id, display_name name, scratch_dues_start_month duesStartMonth FROM players
          WHERE scratch_pool = 1 AND active = 1 AND archived = 0
          ORDER BY display_name COLLATE NOCASE`,
       )
-      .all() as Array<{ id: number; name: string }>
-  ).map((row) => ({ id: Number(row.id), name: row.name }));
+      .all() as Array<{
+      id: number;
+      name: string;
+      duesStartMonth: string | null;
+    }>
+  ).map((row) => ({
+    id: Number(row.id),
+    name: row.name,
+    duesStartMonth: row.duesStartMonth,
+  }));
 }
 
 function insertDues(
@@ -219,8 +229,13 @@ export function syncScratchMoney(now = new Date(), db = getDb()): void {
   backfillSessionTickets(db);
   const today = pacificYmd(now);
   const members = poolMembers(db);
-  for (const monthKey of duesMonthKeysDue(today)) {
-    for (const member of members) insertDues(db, member, monthKey);
+  for (const member of members) {
+    for (const monthKey of duesMonthKeysDue(
+      today,
+      member.duesStartMonth ?? SCRATCH_LEDGER_START_MONTH,
+    )) {
+      insertDues(db, member, monthKey);
+    }
   }
 }
 
@@ -332,18 +347,17 @@ export function setScratchPoolMember(
   db = getDb(),
 ): void {
   const player = db
-    .prepare("SELECT id, display_name name FROM players WHERE id = ?")
-    .get(playerId) as { id: number; name: string } | undefined;
+    .prepare("SELECT id, scratch_pool inPool FROM players WHERE id = ?")
+    .get(playerId) as { id: number; inPool: number } | undefined;
   if (!player) throw new Error("Player not found");
+  if (Boolean(player.inPool) === inPool) return;
   db.prepare(
-    "UPDATE players SET scratch_pool = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-  ).run(inPool ? 1 : 0, playerId);
-  if (inPool) {
-    const today = pacificYmd();
-    for (const monthKey of duesMonthKeysDue(today)) {
-      insertDues(db, { id: player.id, name: player.name }, monthKey);
-    }
-  }
+    "UPDATE players SET scratch_pool = ?, scratch_dues_start_month = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+  ).run(
+    inPool ? 1 : 0,
+    inPool ? nextDuesDate(pacificYmd()).slice(0, 7) : null,
+    playerId,
+  );
 }
 
 export function getScratchMoney(
@@ -383,7 +397,7 @@ export function getScratchMoney(
     nextDuesDate: nextDuesDate(today),
     nextDuesCount: members.length,
     nextDuesTotal: members.length * SCRATCH_DUES_DOLLARS,
-    members,
+    members: members.map(({ id, name }) => ({ id, name })),
     entries: [...withBalance].reverse(),
   };
 }
