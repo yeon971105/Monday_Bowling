@@ -13,6 +13,15 @@ type SqliteDb = InstanceType<typeof Database>;
 
 let database: SqliteDb | null = null;
 
+export function pacificYmd(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS settings (
@@ -135,6 +144,7 @@ export function getDb(): SqliteDb {
   migrateSessionColumns(database);
   migrateSessionDates(database);
   migrateScratchMoney(database);
+  repairOct5JinsolTicket(database);
   const insert = database.prepare(
     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
   );
@@ -237,6 +247,60 @@ function migrateScratchMoney(db: SqliteDb): void {
             AND scratch_dues_start_month = '2026-10'
         );
     `);
+  }
+}
+
+function repairOct5JinsolTicket(db: SqliteDb): void {
+  // Undo the Oct 5 ticket awarded before Jinsol's Oct 9 membership start.
+  const player = db
+    .prepare(
+      "SELECT id, scratch_dues_start_month startMonth FROM players WHERE display_name = 'Jinsol Bae' AND scratch_pool = 1",
+    )
+    .get() as { id: number; startMonth: string | null } | undefined;
+  if (!player) return;
+  const sessions = db
+    .prepare(
+      "SELECT id, lottery_ids_json lotteryIds, scratch_winners_json winners FROM sessions WHERE session_date = '2026-10-05'",
+    )
+    .all() as Array<{
+    id: number;
+    lotteryIds: string | null;
+    winners: string | null;
+  }>;
+  for (const session of sessions) {
+    let winners: Array<{ playerId: string | number }>;
+    let lotteryIds: Array<string | number>;
+    try {
+      winners = JSON.parse(session.winners ?? "[]");
+      lotteryIds = JSON.parse(session.lotteryIds ?? "[]");
+      if (!Array.isArray(winners) || !Array.isArray(lotteryIds)) continue;
+    } catch {
+      continue;
+    }
+    if (
+      !winners.some((winner) => String(winner.playerId) === String(player.id))
+    )
+      continue;
+    if (!player.startMonth || player.startMonth < "2026-10")
+      db.prepare(
+        "UPDATE players SET scratch_dues_start_month = '2026-10' WHERE id = ?",
+      ).run(player.id);
+    db.prepare(
+      "UPDATE sessions SET lottery_ids_json = ?, scratch_winners_json = ? WHERE id = ?",
+    ).run(
+      JSON.stringify(
+        lotteryIds.filter((id) => String(id) !== String(player.id)),
+      ),
+      JSON.stringify(
+        winners.filter(
+          (winner) => String(winner.playerId) !== String(player.id),
+        ),
+      ),
+      session.id,
+    );
+    db.prepare(
+      "DELETE FROM scratch_ledger WHERE kind = 'ticket' AND session_id = ? AND player_id = ?",
+    ).run(session.id, player.id);
   }
 }
 
@@ -373,6 +437,7 @@ type PlayerRow = {
   archived: number;
   notes: string;
   scratch_pool?: number;
+  scratch_dues_start_month?: string | null;
   updated_at: string;
 };
 
@@ -415,7 +480,10 @@ export function rowToPlayer(
     active: Boolean(row.active),
     archived: Boolean(row.archived),
     notes: row.notes,
-    scratchPool: Boolean(row.scratch_pool),
+    scratchPool:
+      Boolean(row.scratch_pool) &&
+      (!row.scratch_dues_start_month ||
+        `${row.scratch_dues_start_month}-09` <= pacificYmd()),
     updatedAt: row.updated_at,
   };
 }

@@ -1,4 +1,5 @@
-import { getDb } from "./db";
+import { getDb, pacificYmd } from "./db";
+export { pacificYmd } from "./db";
 import {
   LAST_GAME_TICKET_DOLLARS,
   type LastGamePrize,
@@ -13,19 +14,9 @@ import type {
 export const SCRATCH_DUES_DOLLARS = 20;
 export const SCRATCH_TICKET_DOLLARS = 10;
 export const SCRATCH_DUES_DAY = 9;
-export const SCRATCH_TZ = "America/Los_Angeles";
 export const SCRATCH_LEDGER_START_MONTH = "2026-09";
 
 type SqliteDb = ReturnType<typeof getDb>;
-
-export function pacificYmd(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: SCRATCH_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
 
 export function monthKeyFromYmd(ymd: string): string {
   return ymd.slice(0, 7);
@@ -95,15 +86,16 @@ type LedgerRow = {
 
 type PoolMember = ScratchPoolMember & { duesStartMonth: string | null };
 
-function poolMembers(db: SqliteDb): PoolMember[] {
+function poolMembers(db: SqliteDb, onDate: string): PoolMember[] {
   return (
     db
       .prepare(
         `SELECT id, display_name name, scratch_dues_start_month duesStartMonth FROM players
          WHERE scratch_pool = 1 AND active = 1 AND archived = 0
+           AND (scratch_dues_start_month IS NULL OR scratch_dues_start_month || '-09' <= ?)
          ORDER BY display_name COLLATE NOCASE`,
       )
-      .all() as Array<{
+      .all(onDate) as Array<{
       id: number;
       name: string;
       duesStartMonth: string | null;
@@ -228,7 +220,7 @@ function backfillSessionTickets(db: SqliteDb): void {
 export function syncScratchMoney(now = new Date(), db = getDb()): void {
   backfillSessionTickets(db);
   const today = pacificYmd(now);
-  const members = poolMembers(db);
+  const members = poolMembers(db, today);
   for (const member of members) {
     for (const monthKey of duesMonthKeysDue(
       today,
@@ -366,7 +358,8 @@ export function getScratchMoney(
 ): ScratchMoneySnapshot {
   syncScratchMoney(now, db);
   const today = pacificYmd(now);
-  const members = poolMembers(db);
+  const members = poolMembers(db, today);
+  const nextMembers = poolMembers(db, nextDuesDate(today));
   const rows = db
     .prepare(
       `SELECT id, entry_date, kind, player_id, player_name, amount, session_id, month_key, note
@@ -395,8 +388,8 @@ export function getScratchMoney(
     duesDay: SCRATCH_DUES_DAY,
     today,
     nextDuesDate: nextDuesDate(today),
-    nextDuesCount: members.length,
-    nextDuesTotal: members.length * SCRATCH_DUES_DOLLARS,
+    nextDuesCount: nextMembers.length,
+    nextDuesTotal: nextMembers.length * SCRATCH_DUES_DOLLARS,
     members: members.map(({ id, name }) => ({ id, name })),
     entries: [...withBalance].reverse(),
   };
