@@ -814,6 +814,10 @@ tr:last-child td {
 .history-edit-actions {
   margin-bottom: 12px;
 }
+.history-edit-actions .button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .player-score-grid.compact input {
   min-width: 0;
   padding: 7px 4px;
