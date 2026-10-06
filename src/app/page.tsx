@@ -3803,6 +3803,16 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
               );
             const open = openId === session.id;
             const editing = scoreEdit?.sessionId === session.id;
+            const scoresChanged = Boolean(
+              editing &&
+              scoreEdit &&
+              Object.entries(scoreEdit.draft).some(([id, games]) =>
+                games.some(
+                  (value, index) =>
+                    value !== String(scoreEdit.original[id]?.[index] ?? ""),
+                ),
+              ),
+            );
             return (
               <div key={session.id} className="history-session">
                 <div className="history-row">
@@ -3834,7 +3844,7 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
                             type="button"
                             className="button small"
                             onClick={saveScoreEdit}
-                            disabled={savingScores}
+                            disabled={savingScores || !scoresChanged}
                           >
                             {savingScores ? "Saving…" : "Save scores"}
                           </button>
