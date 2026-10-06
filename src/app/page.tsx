@@ -3401,6 +3401,13 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
   }>({ key: "winRate", dir: "desc" });
   const [openId, setOpenId] = useState<number>();
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [scoreEdit, setScoreEdit] = useState<{
+    sessionId: number;
+    original: ScoreMap;
+    draft: Record<string, string[]>;
+  }>();
+  const [savingScores, setSavingScores] = useState(false);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -3415,6 +3422,59 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
   useEffect(() => {
     load().catch((err) => setError(err.message));
   }, [load, refreshKey]);
+
+  const beginScoreEdit = (session: SavedSession) => {
+    setError("");
+    setNotice("");
+    setScoreEdit({
+      sessionId: session.id,
+      original: structuredClone(session.scores),
+      draft: Object.fromEntries(
+        Object.entries(session.scores).map(([id, games]) => [
+          id,
+          games.map((score) => (score == null ? "" : String(score))),
+        ]),
+      ),
+    });
+  };
+
+  const saveScoreEdit = async () => {
+    if (!scoreEdit) return;
+    const scores: ScoreMap = {};
+    for (const [id, games] of Object.entries(scoreEdit.draft)) {
+      const parsed = games.map((value) =>
+        value.trim() === "" ? null : Number(value),
+      );
+      if (
+        parsed.length !== GAMES_PER_SESSION ||
+        parsed.some(
+          (score) =>
+            score !== null &&
+            (!Number.isInteger(score) || score < 0 || score > 300),
+        )
+      ) {
+        setError("Enter a whole number from 0 to 300 for each game.");
+        return;
+      }
+      scores[id] = parsed as ScoreMap[string];
+    }
+    setSavingScores(true);
+    setError("");
+    try {
+      await api(`/api/sessions/${scoreEdit.sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scores, expectedScores: scoreEdit.original }),
+      });
+      setScoreEdit(undefined);
+      setNotice("Scores saved. Team results and prizes stayed the same.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingScores(false);
+    }
+  };
 
   const recentSessions = useMemo(() => {
     const now = new Date();
@@ -3512,6 +3572,7 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
         </div>
       </div>
       {error && <div className="notice error">{error}</div>}
+      {notice && <div className="notice success">{notice}</div>}
 
       <div className="card">
         <h3>Player stats</h3>
@@ -3741,6 +3802,7 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
                 0,
               );
             const open = openId === session.id;
+            const editing = scoreEdit?.sessionId === session.id;
             return (
               <div key={session.id} className="history-session">
                 <div className="history-row">
@@ -3748,6 +3810,7 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
                     type="button"
                     className="session-main"
                     onClick={() => setOpenId(open ? undefined : session.id)}
+                    disabled={editing}
                   >
                     <div className="session-title-line">
                       <strong>{session.sessionDate}</strong>
@@ -3764,6 +3827,42 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
                 </div>
                 {open && (
                   <div className="history-detail">
+                    <div className="history-edit-actions actions">
+                      {editing ? (
+                        <>
+                          <button
+                            type="button"
+                            className="button small"
+                            onClick={saveScoreEdit}
+                            disabled={savingScores}
+                          >
+                            {savingScores ? "Saving…" : "Save scores"}
+                          </button>
+                          <button
+                            type="button"
+                            className="button small secondary"
+                            onClick={() => {
+                              setScoreEdit(undefined);
+                              setError("");
+                            }}
+                            disabled={savingScores}
+                          >
+                            Cancel
+                          </button>
+                          <span className="muted">
+                            Team results and prizes stay as saved.
+                          </span>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button small secondary"
+                          onClick={() => beginScoreEdit(session)}
+                        >
+                          Edit scores
+                        </button>
+                      )}
+                    </div>
                     <div className="team-grid">
                       {session.finalTeams.map((team) => {
                         const teamResult = session.results?.find(
@@ -3827,9 +3926,41 @@ function HistoryTab({ refreshKey }: { refreshKey: number }) {
                                         <span className="muted">
                                           G{gameIndex + 1}
                                         </span>
-                                        <strong>
-                                          {games[gameIndex] ?? "—"}
-                                        </strong>
+                                        {editing &&
+                                        scoreEdit.draft[player.id] ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={300}
+                                            inputMode="numeric"
+                                            aria-label={`${player.name} game ${gameIndex + 1} score`}
+                                            value={
+                                              scoreEdit.draft[player.id][
+                                                gameIndex
+                                              ]
+                                            }
+                                            onChange={(event) => {
+                                              const value = event.target.value;
+                                              setScoreEdit((current) => {
+                                                if (!current) return current;
+                                                const draft = {
+                                                  ...current.draft,
+                                                  [player.id]: [
+                                                    ...current.draft[player.id],
+                                                  ],
+                                                };
+                                                draft[player.id][gameIndex] =
+                                                  value;
+                                                return { ...current, draft };
+                                              });
+                                            }}
+                                            disabled={savingScores}
+                                          />
+                                        ) : (
+                                          <strong>
+                                            {games[gameIndex] ?? "—"}
+                                          </strong>
+                                        )}
                                       </div>
                                     ))}
                                   </div>

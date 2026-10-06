@@ -737,12 +737,12 @@ export async function POST(request: NextRequest, context: Context) {
       const scores = (body.scores ?? {}) as ScoreMap;
       const requestedGameCount = Number(body.gameCount ?? GAMES_PER_SESSION);
       const gameLimit = Number.isFinite(requestedGameCount)
-        ? Math.max(0, Math.min(GAMES_PER_SESSION, Math.trunc(requestedGameCount)))
+        ? Math.max(
+            0,
+            Math.min(GAMES_PER_SESSION, Math.trunc(requestedGameCount)),
+          )
         : GAMES_PER_SESSION;
-      const gameCount = Math.min(
-        gameLimit,
-        enteredGameCount(scores),
-      );
+      const gameCount = Math.min(gameLimit, enteredGameCount(scores));
       const lastGameTeams =
         gameCount >= GAMES_PER_SESSION
           ? (body.gameRosters?.[LAST_GAME_INDEX] ?? body.teams)
@@ -874,6 +874,69 @@ export async function POST(request: NextRequest, context: Context) {
   }
 }
 
+export async function PATCH(request: NextRequest, context: Context) {
+  try {
+    const s = (await context.params).segments;
+    if (
+      s[0] !== "sessions" ||
+      s.length !== 2 ||
+      !Number.isSafeInteger(Number(s[1]))
+    )
+      return fail("Not found", 404);
+    const db = getDb();
+    const id = Number(s[1]);
+    const existing = db
+      .prepare("SELECT scores_json FROM sessions WHERE id=?")
+      .get(id) as { scores_json: string | null } | undefined;
+    if (!existing) return fail("Session not found", 404);
+    const current = parseSessionScores(existing.scores_json);
+    const { scores, expectedScores } = await request.json();
+    const validScores = (value: unknown): value is ScoreMap => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return false;
+      return (
+        Object.keys(value).length === Object.keys(current).length &&
+        Object.entries(value).every(
+          ([playerId, games]) =>
+            Object.hasOwn(current, playerId) &&
+            Array.isArray(games) &&
+            games.length === GAMES_PER_SESSION &&
+            games.every(
+              (score) =>
+                score === null ||
+                (Number.isInteger(score) && score >= 0 && score <= 300),
+            ),
+        )
+      );
+    };
+    if (!validScores(scores) || !validScores(expectedScores))
+      return fail(
+        "Scores must contain the saved players and games (0–300).",
+        400,
+      );
+    if (JSON.stringify(expectedScores) !== JSON.stringify(current))
+      return fail(
+        "Scores changed elsewhere. Reload History and try again.",
+        409,
+      );
+    const result = db
+      .prepare(
+        "UPDATE sessions SET scores_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND scores_json IS ?",
+      )
+      .run(JSON.stringify(scores), id, existing.scores_json);
+    if (!result.changes)
+      return fail(
+        "Scores changed elsewhere. Reload History and try again.",
+        409,
+      );
+    return json({ id, scores });
+  } catch (error) {
+    return fail(error);
+  } finally {
+    persistDb();
+  }
+}
+
 export async function PUT(request: NextRequest, context: Context) {
   try {
     const s = (await context.params).segments;
@@ -916,10 +979,7 @@ export async function PUT(request: NextRequest, context: Context) {
             players: Array<{ id: string; name: string; usedAverage: number }>;
           }> | null>)
         : [];
-      const fallbackRosters = Array.from(
-        { length: gameCount },
-        () => teams,
-      );
+      const fallbackRosters = Array.from({ length: gameCount }, () => teams);
       const rosters = storedRosters.length ? storedRosters : fallbackRosters;
       const moneyTeamsByGame: Array<MoneyTeam[] | null> = rosters.map((rows) =>
         rows

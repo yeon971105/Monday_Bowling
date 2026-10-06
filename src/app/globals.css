@@ -811,6 +811,16 @@ tr:last-child td {
 .history-detail {
   padding: 8px 0 14px;
 }
+.history-edit-actions {
+  margin-bottom: 12px;
+}
+.player-score-grid.compact input {
+  min-width: 0;
+  padding: 7px 4px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+}
 .history-margins {
   margin-bottom: 14px;
   padding: 10px 12px;
