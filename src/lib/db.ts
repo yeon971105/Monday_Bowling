@@ -145,6 +145,7 @@ export function getDb(): SqliteDb {
   migrateSessionDates(database);
   migrateScratchMoney(database);
   repairOct5JinsolTicket(database);
+  repairOct5GuestIdentity(database);
   const insert = database.prepare(
     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
   );
@@ -301,6 +302,80 @@ function repairOct5JinsolTicket(db: SqliteDb): void {
     db.prepare(
       "DELETE FROM scratch_ledger WHERE kind = 'ticket' AND session_id = ? AND player_id = ?",
     ).run(session.id, player.id);
+  }
+}
+
+function repairOct5GuestIdentity(db: SqliteDb): void {
+  // Attribute the three Oct 5 games to the existing player, keeping the night's 150 average.
+  const guest = db
+    .prepare("SELECT id FROM players WHERE display_name = 'Temp Guest'")
+    .get() as { id: number } | undefined;
+  const dongyoung = db
+    .prepare("SELECT id FROM players WHERE display_name = 'Dongyoung Park'")
+    .get() as { id: number } | undefined;
+  if (!guest || !dongyoung) return;
+  const oldId = String(guest.id);
+  const newId = String(dongyoung.id);
+  const columns = [
+    "attendees_json",
+    "generated_teams_json",
+    "final_teams_json",
+    "game_rosters_json",
+    "game_results_json",
+  ] as const;
+  const rows = db
+    .prepare(
+      `SELECT id, scores_json, absent_ids_json, ${columns.join(", ")} FROM sessions WHERE session_date = '2026-10-05'`,
+    )
+    .all() as Array<Record<string, string | number | null>>;
+  const replace = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(replace);
+    if (!value || typeof value !== "object") return value;
+    const result = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, replace(child)]),
+    );
+    if (String(result.id) === oldId && result.name === "Temp Guest") {
+      result.id = typeof result.id === "number" ? dongyoung.id : newId;
+      result.name = "Dongyoung Park";
+    }
+    if (Array.isArray(result.playerIds))
+      result.playerIds = result.playerIds.map((id: string | number) =>
+        String(id) === oldId ? newId : id,
+      );
+    return result;
+  };
+  for (const row of rows) {
+    let scores: Record<string, unknown>;
+    let absent: Array<string | number>;
+    let snapshots: Array<unknown>;
+    try {
+      scores = JSON.parse(String(row.scores_json ?? "{}"));
+      absent = JSON.parse(String(row.absent_ids_json));
+      snapshots = columns.map((column) =>
+        row[column] == null ? null : JSON.parse(String(row[column])),
+      );
+      if (!Array.isArray(absent) || !Array.isArray(snapshots[2])) continue;
+    } catch {
+      continue;
+    }
+    if (
+      JSON.stringify(scores[oldId]) !== "[105,113,135]" ||
+      scores[newId] != null
+    )
+      continue;
+    if (!JSON.stringify(snapshots[2]).includes('"name":"Temp Guest"')) continue;
+    scores[newId] = scores[oldId];
+    delete scores[oldId];
+    db.prepare(
+      `UPDATE sessions SET scores_json = ?, absent_ids_json = ?, ${columns.map((column) => `${column} = ?`).join(", ")} WHERE id = ?`,
+    ).run(
+      JSON.stringify(scores),
+      JSON.stringify(absent.filter((id) => String(id) !== newId)),
+      ...snapshots.map((snapshot) =>
+        snapshot == null ? null : JSON.stringify(replace(snapshot)),
+      ),
+      row.id,
+    );
   }
 }
 
