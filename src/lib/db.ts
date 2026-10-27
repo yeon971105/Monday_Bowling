@@ -146,6 +146,7 @@ export function getDb(): SqliteDb {
   migrateScratchMoney(database);
   repairOct5JinsolTicket(database);
   repairOct5GuestIdentity(database);
+  repairOct26ClubPot(database);
   const insert = database.prepare(
     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
   );
@@ -211,7 +212,7 @@ function migrateScratchMoney(db: SqliteDb): void {
     CREATE TABLE IF NOT EXISTS scratch_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entry_date TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket')),
+      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket','donation')),
       player_id INTEGER,
       player_name TEXT NOT NULL,
       amount INTEGER NOT NULL,
@@ -379,44 +380,78 @@ function repairOct5GuestIdentity(db: SqliteDb): void {
   }
 }
 
+function repairOct26ClubPot(db: SqliteDb): void {
+  db.transaction(() => {
+    const key = "oct26-2026-club-pot-correction";
+    if (db.prepare("SELECT 1 FROM settings WHERE key = ?").get(key)) return;
+    const fee = db.prepare(
+      `SELECT id FROM scratch_ledger WHERE id = 3673 AND session_id = 42
+        AND entry_date = '2026-10-26' AND kind = 'last_game_fee' AND amount = 17
+        AND created_at = '2026-10-27 06:49:09'`,
+    ).get();
+    if (!fee) return;
+    // Organizer confirmed $16 collected and a separate $40 donation for Oct 26.
+    db.prepare(
+      "UPDATE scratch_ledger SET amount = 16, note = '$16 collected · $1 to club pot' WHERE id = 3673",
+    ).run();
+    const session = db.prepare(
+      "SELECT last_game_prize_json FROM sessions WHERE id = 42",
+    ).get() as { last_game_prize_json: string | null } | undefined;
+    if (session?.last_game_prize_json) {
+      const prize = JSON.parse(session.last_game_prize_json);
+      prize.contribution = 16;
+      prize.clubPotAdded = 16 - prize.payout;
+      db.prepare("UPDATE sessions SET last_game_prize_json = ? WHERE id = 42")
+        .run(JSON.stringify(prize));
+    }
+    db.prepare(
+      `INSERT INTO scratch_ledger(entry_date, kind, player_name, amount, note)
+       VALUES ('2026-10-26', 'donation', 'Donation', 40, 'Donation')`,
+    ).run();
+    db.prepare("INSERT INTO settings(key, value) VALUES (?, 'true')").run(key);
+  })();
+}
+
 function migrateScratchLedgerKinds(db: SqliteDb): void {
-  const row = db
-    .prepare(
-      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scratch_ledger'`,
-    )
-    .get() as { sql: string } | undefined;
-  if (!row?.sql || row.sql.includes("'last_game_fee'")) return;
-  db.exec(`
-    CREATE TABLE scratch_ledger_next (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      entry_date TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket')),
-      player_id INTEGER,
-      player_name TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      session_id INTEGER,
-      month_key TEXT,
-      note TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    INSERT INTO scratch_ledger_next(
-      id, entry_date, kind, player_id, player_name, amount,
-      session_id, month_key, note, created_at
-    )
-    SELECT id, entry_date, kind, player_id, player_name, amount,
-           session_id, month_key, note, created_at
-    FROM scratch_ledger;
-    DROP TABLE scratch_ledger;
-    ALTER TABLE scratch_ledger_next RENAME TO scratch_ledger;
-    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_dues
-      ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
-    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
-      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
-    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_fee
-      ON scratch_ledger(kind, session_id) WHERE kind = 'last_game_fee';
-    CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_tickets
-      ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'last_game_ticket';
-  `);
+  db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scratch_ledger'`,
+      )
+      .get() as { sql: string } | undefined;
+    if (!row?.sql || row.sql.includes("'donation'")) return;
+    db.exec(`
+      CREATE TABLE scratch_ledger_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_date TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('dues','ticket','payout','last_game_fee','last_game_ticket','donation')),
+        player_id INTEGER,
+        player_name TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        session_id INTEGER,
+        month_key TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO scratch_ledger_next(
+        id, entry_date, kind, player_id, player_name, amount,
+        session_id, month_key, note, created_at
+      )
+      SELECT id, entry_date, kind, player_id, player_name, amount,
+             session_id, month_key, note, created_at
+      FROM scratch_ledger;
+      DROP TABLE scratch_ledger;
+      ALTER TABLE scratch_ledger_next RENAME TO scratch_ledger;
+      CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_dues
+        ON scratch_ledger(kind, month_key, player_id) WHERE kind = 'dues';
+      CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_tickets
+        ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'ticket';
+      CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_fee
+        ON scratch_ledger(kind, session_id) WHERE kind = 'last_game_fee';
+      CREATE UNIQUE INDEX IF NOT EXISTS scratch_ledger_last_game_tickets
+        ON scratch_ledger(kind, session_id, player_id) WHERE kind = 'last_game_ticket';
+    `);
+  })();
 }
 
 export function ensureDefaultRoster(db = getDb()): void {

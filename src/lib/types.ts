@@ -135,7 +135,7 @@ export interface ParsedLeaguePdf {
 }
 
 export type ScratchLedgerKind =
-  "dues" | "ticket" | "payout" | "last_game_fee" | "last_game_ticket";
+  "dues" | "ticket" | "payout" | "last_game_fee" | "last_game_ticket" | "donation";
 
 export type ScratchLedgerEntry = {
   id: number;

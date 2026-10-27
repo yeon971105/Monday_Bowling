@@ -3365,6 +3365,13 @@ function ClubTab({
                 <div className="player-stat-top" style={{ marginBottom: 0 }}>
                   <div>
                     <strong>{prettyMoneyDate(day.date)}</strong>
+                    {data.entries
+                      .filter((entry) => entry.date === day.date && entry.kind === "donation")
+                      .map((entry) => (
+                        <div className="muted" key={entry.id}>
+                          Donation {formatScratchMoney(entry.amount, true)}
+                        </div>
+                      ))}
                     <div className="muted" style={{ marginTop: 2 }}>
                       {day.inAmount
                         ? `In ${formatScratchMoney(day.inAmount)}`
