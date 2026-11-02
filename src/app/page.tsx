@@ -2601,8 +2601,9 @@ function PlayTab({
                   : "Game 1"}
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
-              Balance: AVG below 140 / 140–180 / above 180 pools. Manual: start
-              with empty teams and place each player.
+              Balance: AVG below 160 / 160 and above pools. Random choice within
+              a team handicap gap below 50 (equal sizes) or 100 (unequal sizes).
+              Manual: start with empty teams and place each player.
             </p>
             <div className="actions" style={{ marginTop: 16 }}>
               <button

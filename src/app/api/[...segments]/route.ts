@@ -12,7 +12,7 @@ import {
   saveLineup,
 } from "@/lib/db";
 import { assertSettings, normalizeName, validateAverage } from "@/lib/bowling";
-import { buildRepeatPairs, generateTeams } from "@/lib/generator";
+import { generateTeams } from "@/lib/generator";
 import {
   applyImportDecisions,
   buildReview,
@@ -702,21 +702,12 @@ export async function POST(request: NextRequest, context: Context) {
       if (teamCount < 2 || teamCount > 6)
         throw new Error("Choose 2 to 6 teams");
       const settings = getSettings();
-      const recent = db
-        .prepare(
-          "SELECT final_teams_json finalTeams FROM sessions ORDER BY session_date DESC, id DESC LIMIT ?",
-        )
-        .all(settings.repeatWindow) as Array<{ finalTeams: string }>;
-      const repeatPairs = buildRepeatPairs(
-        recent.map((r) => ({ teams: JSON.parse(r.finalTeams) })),
-      );
       return json(
         generateTeams({
           ...body,
           teamCount,
           mode: body.mode === "RANDOM" ? "RANDOM" : "BALANCED",
           targetTeamSize: body.targetTeamSize ?? settings.targetTeamSize,
-          repeatPairs,
         }),
       );
     }

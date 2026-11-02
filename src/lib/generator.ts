@@ -7,8 +7,8 @@ import type {
   SkillTier,
   TeamMetrics,
 } from "./types";
+import { teamHandicapPerGame } from "./scoring";
 
-type PairCounts = Map<string, number>;
 const TIERS: SkillTier[] = ["A", "B", "C", "D"];
 
 function hashSeed(seed: string): number {
@@ -67,10 +67,6 @@ function desiredSizes(count: number, teamCount: number): number[] {
   );
 }
 
-function pairKey(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
-}
-
 export function teamMetrics(players: GeneratorPlayer[]): TeamMetrics {
   const scratchTotal = players.reduce((sum, p) => sum + p.usedAverage, 0);
   const handicapTotal = players.reduce((sum, p) => sum + p.handicap, 0);
@@ -89,22 +85,7 @@ export function teamMetrics(players: GeneratorPlayer[]): TeamMetrics {
   };
 }
 
-function repeatCount(teams: GeneratorPlayer[][], pairs: PairCounts): number {
-  let count = 0;
-  for (const team of teams) {
-    for (let i = 0; i < team.length; i++) {
-      for (let j = i + 1; j < team.length; j++)
-        count += pairs.get(pairKey(team[i].id, team[j].id)) ?? 0;
-    }
-  }
-  return count;
-}
-
-export function scoreTeams(
-  teams: GeneratorPlayer[][],
-  pairs: PairCounts = new Map(),
-  includeRepeats = true,
-): FairnessMetrics {
+export function scoreTeams(teams: GeneratorPlayer[][]): FairnessMetrics {
   const metrics = teams.map(teamMetrics);
   const sizes = teams.map((team) => team.length);
   const scratch = metrics.map((m) => m.scratchPerPlayer);
@@ -114,7 +95,6 @@ export function scoreTeams(
   ) as Record<SkillTier, number[]>;
   const tierSpread = (tier: SkillTier) =>
     Math.max(...tierDistribution[tier]) - Math.min(...tierDistribution[tier]);
-  const repeatedPairs = repeatCount(teams, pairs);
   const sizeSpread = Math.max(...sizes) - Math.min(...sizes);
   const scratchSpread = Math.max(...scratch) - Math.min(...scratch);
   const projectedSpread = Math.max(...projected) - Math.min(...projected);
@@ -127,8 +107,7 @@ export function scoreTeams(
     tierSpread("A") * 800 +
     tierSpread("D") * 600 +
     scratchSpread * 12 +
-    projectedSpread * 7 +
-    (includeRepeats ? repeatedPairs * 125 : 0);
+    projectedSpread * 7;
   return {
     score: Math.round(score * 10) / 10,
     scratchLow: Math.min(...scratch),
@@ -137,35 +116,26 @@ export function scoreTeams(
     projectedLow: Math.min(...projected),
     projectedHigh: Math.max(...projected),
     projectedSpread,
-    repeatedPairs,
+    repeatedPairs: 0,
     unequalSizes: sizeSpread > 0,
     tierDistribution,
   };
 }
 
-const HIGH_AVERAGE_SPLIT = 181;
-const MID_AVERAGE_SPLIT = 140;
+const AVERAGE_SPLIT = 160;
 
-/** Shuffle <140, 140–<181, and ≥181 pools, then snake-deal each onto teams. */
+/** Shuffle <160 and ≥160 pools, then snake-deal each onto teams. */
 function balancedByAverageSplit(
   players: GeneratorPlayer[],
   sizes: number[],
   random: () => number,
 ): GeneratorPlayer[][] {
   const highs = shuffle(
-    players.filter((player) => player.usedAverage >= HIGH_AVERAGE_SPLIT),
-    random,
-  );
-  const mids = shuffle(
-    players.filter(
-      (player) =>
-        player.usedAverage >= MID_AVERAGE_SPLIT &&
-        player.usedAverage < HIGH_AVERAGE_SPLIT,
-    ),
+    players.filter((player) => player.usedAverage >= AVERAGE_SPLIT),
     random,
   );
   const lows = shuffle(
-    players.filter((player) => player.usedAverage < MID_AVERAGE_SPLIT),
+    players.filter((player) => player.usedAverage < AVERAGE_SPLIT),
     random,
   );
   const teams = sizes.map(() => [] as GeneratorPlayer[]);
@@ -220,7 +190,6 @@ function balancedByAverageSplit(
   };
 
   snakeDeal(highs);
-  snakeDeal(mids);
   snakeDeal(lows);
 
   return teams;
@@ -232,7 +201,6 @@ export function generateTeams(options: {
   targetTeamSize?: number;
   mode?: BalancingMode;
   seed: string;
-  repeatPairs?: Record<string, number>;
 }): GenerationResult {
   if (options.players.length < 2)
     throw new Error("Select at least two players");
@@ -246,7 +214,6 @@ export function generateTeams(options: {
     throw new Error("Team count must be between 2 and the participant count");
   const sizes = desiredSizes(options.players.length, teamCount);
   const players = assignSkillTiers(options.players);
-  const pairs = new Map(Object.entries(options.repeatPairs ?? {}));
   const mode = options.mode ?? "BALANCED";
   const random = mulberry32(hashSeed(options.seed));
   let selected: GeneratorPlayer[][];
@@ -257,38 +224,28 @@ export function generateTeams(options: {
     let cursor = 0;
     for (const size of sizes)
       selected.push(shuffled.slice(cursor, (cursor += size)));
-  } else if (mode === "BALANCED_REPEATS") {
-    // Same average-band shuffle, try a few deals and keep the one with fewer repeats.
-    let best = balancedByAverageSplit(players, sizes, random);
-    let bestScore = scoreTeams(best, pairs, true).score;
-    for (let attempt = 0; attempt < 31; attempt++) {
-      const candidate = balancedByAverageSplit(players, sizes, random);
-      const candidateScore = scoreTeams(candidate, pairs, true).score;
-      if (candidateScore < bestScore) {
-        best = candidate;
-        bestScore = candidateScore;
-      }
-    }
-    selected = best;
   } else {
-    let best = balancedByAverageSplit(players, sizes, random);
-    let bestFairness = scoreTeams(best, pairs, false);
-    for (let attempt = 1; attempt < 32; attempt++) {
+    const handicapLimit = sizes.every((size) => size === sizes[0]) ? 50 : 100;
+    const candidates: GeneratorPlayer[][][] = [];
+    // shortcut: Search at most 1024 deals; use exhaustive search if valid teams are routinely missed.
+    for (let attempt = 0; attempt < 1024 && candidates.length < 32; attempt++) {
       const candidate = balancedByAverageSplit(players, sizes, random);
-      const fairness = scoreTeams(candidate, pairs, false);
-      if (
-        fairness.scratchSpread < bestFairness.scratchSpread ||
-        (fairness.scratchSpread === bestFairness.scratchSpread &&
-          fairness.projectedSpread < bestFairness.projectedSpread)
-      ) {
-        best = candidate;
-        bestFairness = fairness;
-      }
+      const handicaps = teamHandicapPerGame(
+        candidate.map((team) => ({
+          averageSum: team.reduce((sum, player) => sum + player.usedAverage, 0),
+        })),
+      );
+      if (Math.max(...handicaps) - Math.min(...handicaps) < handicapLimit)
+        candidates.push(candidate);
     }
-    selected = best;
+    if (!candidates.length)
+      throw new Error(
+        `No teams found with a team handicap gap below ${handicapLimit} in 1024 shuffles. Shuffle again or use manual teams.`,
+      );
+    selected = candidates[Math.floor(random() * candidates.length)];
   }
 
-  const fairness = scoreTeams(selected, pairs, mode === "BALANCED_REPEATS");
+  const fairness = scoreTeams(selected);
   const teams: GeneratedTeam[] = selected.map((team, index) => ({
     name: `Team ${index + 1}`,
     players: team,
@@ -299,7 +256,6 @@ export function generateTeams(options: {
 
 export function recalculateTeams(
   teams: GeneratedTeam[],
-  repeatPairs: Record<string, number> = {},
 ): Pick<GenerationResult, "teams" | "fairness"> {
   const normalized = teams.map((team) => ({
     ...team,
@@ -307,26 +263,6 @@ export function recalculateTeams(
   }));
   return {
     teams: normalized,
-    fairness: scoreTeams(
-      normalized.map((team) => team.players),
-      new Map(Object.entries(repeatPairs)),
-    ),
+    fairness: scoreTeams(normalized.map((team) => team.players)),
   };
-}
-
-export function buildRepeatPairs(
-  sessions: Array<{ teams: Array<{ players: Array<{ id: string }> }> }>,
-): Record<string, number> {
-  const pairs: Record<string, number> = {};
-  for (const session of sessions) {
-    for (const team of session.teams) {
-      for (let i = 0; i < team.players.length; i++) {
-        for (let j = i + 1; j < team.players.length; j++) {
-          const key = pairKey(team.players[i].id, team.players[j].id);
-          pairs[key] = (pairs[key] ?? 0) + 1;
-        }
-      }
-    }
-  }
-  return pairs;
 }

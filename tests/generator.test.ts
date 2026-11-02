@@ -25,6 +25,63 @@ const ids = (result: ReturnType<typeof generateTeams>) =>
   result.teams.flatMap((t) => t.players.map((p) => p.id));
 
 describe("team generator", () => {
+  it.each([
+    { averages: [180, 125], handicap: 49 },
+    { averages: [180, 180], handicap: 0 },
+    { averages: [111, 111, 111], handicap: 99 },
+  ])(
+    "accepts a team handicap gap of $handicap without a minimum",
+    ({ averages, handicap }) => {
+      const players = group(averages.length).map((player, index) => ({
+        ...player,
+        usedAverage: averages[index],
+      }));
+      const result = generateTeams({ players, teamCount: 2, seed: "boundary" });
+      const totals = result.teams.map((team) =>
+        team.players.reduce((sum, player) => sum + player.usedAverage, 0),
+      );
+      expect(
+        Math.floor((Math.max(...totals) - Math.min(...totals)) * 0.9),
+      ).toBe(handicap);
+    },
+  );
+
+  it.each([
+    { averages: [180, 124], limit: 50 },
+    { averages: [112, 112, 112], limit: 100 },
+  ])(
+    "rejects a team handicap gap equal to the strict $limit limit",
+    ({ averages, limit }) => {
+      const players = group(averages.length).map((player, index) => ({
+        ...player,
+        usedAverage: averages[index],
+      }));
+      expect(() =>
+        generateTeams({ players, teamCount: 2, seed: "boundary" }),
+      ).toThrow(`handicap gap below ${limit}`);
+    },
+  );
+
+  it("randomly selects eligible teams instead of always minimizing the gap", () => {
+    const players = group(4).map((player, index) => ({
+      ...player,
+      usedAverage: [220, 200, 180, 160][index],
+    }));
+    const gaps = new Set<number>();
+    for (let seed = 0; seed < 100; seed++) {
+      const result = generateTeams({
+        players,
+        teamCount: 2,
+        seed: `random-choice-${seed}`,
+      });
+      const totals = result.teams.map((team) =>
+        team.players.reduce((sum, player) => sum + player.usedAverage, 0),
+      );
+      gaps.add(Math.floor(Math.abs(totals[0] - totals[1]) * 0.9));
+    }
+    expect([...gaps].sort((a, b) => a - b)).toEqual([0, 36]);
+  });
+
   it.each([10, 11, 12, 13, 14, 15])(
     "assigns each of %i selected players exactly once with legal team sizes",
     (count) => {
@@ -54,8 +111,7 @@ describe("team generator", () => {
     expect(ids(result)).not.toContain("12");
   });
 
-  it("spreads avg≥150 and avg<150 pools across teams", () => {
-    // Mix of highs (160+) and lows (120-140).
+  it("spreads avg≥160 and avg<160 pools across teams, including the boundary", () => {
     const players: GeneratorPlayer[] = [
       ...[210, 200, 190, 180, 170, 160].map((average, i) => ({
         id: `h${i}`,
@@ -65,7 +121,7 @@ describe("team generator", () => {
         handicap: 0,
         projectedScore: average,
       })),
-      ...[140, 135, 130, 125, 120, 115].map((average, i) => ({
+      ...[159, 150, 140, 130, 120, 115].map((average, i) => ({
         id: `l${i}`,
         name: `Low ${i}`,
         usedAverage: average,
@@ -74,21 +130,20 @@ describe("team generator", () => {
         projectedScore: average,
       })),
     ];
-    const result = generateTeams({
-      players,
-      teamCount: 3,
-      seed: "pools",
-    });
-    for (const pool of ["high", "low"] as const) {
-      const counts = result.teams.map(
-        (team) =>
-          team.players.filter((player) =>
-            pool === "high"
-              ? player.usedAverage >= 150
-              : player.usedAverage < 150,
-          ).length,
-      );
-      expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    for (let seed = 0; seed < 100; seed++) {
+      const result = generateTeams({
+        players,
+        teamCount: 3,
+        seed: `pools-${seed}`,
+      });
+      for (const team of result.teams) {
+        expect(
+          team.players.filter((player) => player.usedAverage >= 160),
+        ).toHaveLength(2);
+        expect(
+          team.players.filter((player) => player.usedAverage < 160),
+        ).toHaveLength(2);
+      }
     }
   });
 
@@ -111,10 +166,18 @@ describe("team generator", () => {
   ])(
     "balances $paying paying members across $teamCount teams of $count",
     ({ count, teamCount, paying }) => {
-      const players = group(count).map((player, index) => ({
-        ...player,
-        payingMember: index < paying,
-      }));
+      const players = group(count).map((player, index) => {
+        // Seven narrowly ranked players cannot satisfy the new unequal-size handicap cap.
+        const usedAverage = count === 7 ? 220 - index * 20 : player.usedAverage;
+        const handicap = calculateHandicap(usedAverage, settings);
+        return {
+          ...player,
+          usedAverage,
+          handicap,
+          projectedScore: usedAverage + handicap,
+          payingMember: index < paying,
+        };
+      });
       for (let seed = 0; seed < 12; seed++) {
         const result = generateTeams({
           players,

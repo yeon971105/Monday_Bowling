@@ -1,6 +1,5 @@
 export type AverageMode = "AUTO" | "MANUAL" | "FIXED";
-export type BalancingMode =
-  "RANDOM" | "BALANCED" | "BALANCED_REPEATS" | "MANUAL";
+export type BalancingMode = "RANDOM" | "BALANCED" | "MANUAL";
 export type SkillTier = "A" | "B" | "C" | "D";
 
 export interface LeagueSettings {
