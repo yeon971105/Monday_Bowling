@@ -7,7 +7,6 @@ import type {
   SkillTier,
   TeamMetrics,
 } from "./types";
-import { teamHandicapPerGame } from "./scoring";
 
 const TIERS: SkillTier[] = ["A", "B", "C", "D"];
 
@@ -197,6 +196,7 @@ function balancedByAverageSplit(
 
 export function generateTeams(options: {
   players: GeneratorPlayer[];
+  attendanceCount?: number;
   teamCount?: number;
   targetTeamSize?: number;
   mode?: BalancingMode;
@@ -204,6 +204,13 @@ export function generateTeams(options: {
 }): GenerationResult {
   if (options.players.length < 2)
     throw new Error("Select at least two players");
+  if (
+    options.attendanceCount !== undefined &&
+    options.attendanceCount !== options.players.length
+  )
+    throw new Error(
+      "Every checked-in player needs an average before generating teams.",
+    );
   const teamCount =
     options.teamCount ??
     Math.max(
@@ -225,22 +232,51 @@ export function generateTeams(options: {
     for (const size of sizes)
       selected.push(shuffled.slice(cursor, (cursor += size)));
   } else {
-    const handicapLimit = sizes.every((size) => size === sizes[0]) ? 50 : 100;
+    const lowestAverage = Math.min(
+      ...players.map((player) => player.usedAverage),
+    );
+    const lowestPlayers = players.filter(
+      (player) => player.usedAverage === lowestAverage,
+    );
+    const heldOut =
+      players.length % 2 === 1
+        ? lowestPlayers[Math.floor(random() * lowestPlayers.length)]
+        : undefined;
+    const dealPlayers = heldOut
+      ? players.filter((player) => player.id !== heldOut.id)
+      : players;
+    const dealSizes = desiredSizes(dealPlayers.length, teamCount);
+    const averageLimit = heldOut ? 120 : 80;
     const candidates: GeneratorPlayer[][][] = [];
     // shortcut: Search at most 1024 deals; use exhaustive search if valid teams are routinely missed.
     for (let attempt = 0; attempt < 1024 && candidates.length < 32; attempt++) {
-      const candidate = balancedByAverageSplit(players, sizes, random);
-      const handicaps = teamHandicapPerGame(
-        candidate.map((team) => ({
-          averageSum: team.reduce((sum, player) => sum + player.usedAverage, 0),
-        })),
+      const candidate = balancedByAverageSplit(dealPlayers, dealSizes, random);
+      const totals = candidate.map((team) =>
+        team.reduce((sum, player) => sum + player.usedAverage, 0),
       );
-      if (Math.max(...handicaps) - Math.min(...handicaps) < handicapLimit)
-        candidates.push(candidate);
+      if (Math.max(...totals) - Math.min(...totals) >= averageLimit) continue;
+      if (heldOut) {
+        const lowestTotal = Math.min(...totals);
+        const weakest = totals
+          .map((sum, index) => ({ sum, index }))
+          .filter(({ sum }) => sum === lowestTotal);
+        const index = weakest[Math.floor(random() * weakest.length)].index;
+        candidate[index].push(heldOut);
+        const finalSizes = candidate.map((team) => team.length);
+        const payingCounts = candidate.map(
+          (team) => team.filter((player) => player.payingMember).length,
+        );
+        if (
+          Math.max(...finalSizes) - Math.min(...finalSizes) > 1 ||
+          Math.max(...payingCounts) - Math.min(...payingCounts) > 1
+        )
+          continue;
+      }
+      candidates.push(candidate);
     }
     if (!candidates.length)
       throw new Error(
-        `No teams found with a team handicap gap below ${handicapLimit} in 1024 shuffles. Shuffle again or use manual teams.`,
+        `No teams found with balanced sizes and paying members and an average-total gap below ${averageLimit}${heldOut ? " before adding the lowest-average player" : ""} in 1024 shuffles. Shuffle again or use manual teams.`,
       );
     selected = candidates[Math.floor(random() * candidates.length)];
   }

@@ -25,43 +25,6 @@ const ids = (result: ReturnType<typeof generateTeams>) =>
   result.teams.flatMap((t) => t.players.map((p) => p.id));
 
 describe("team generator", () => {
-  it.each([
-    { averages: [180, 125], handicap: 49 },
-    { averages: [180, 180], handicap: 0 },
-    { averages: [111, 111, 111], handicap: 99 },
-  ])(
-    "accepts a team handicap gap of $handicap without a minimum",
-    ({ averages, handicap }) => {
-      const players = group(averages.length).map((player, index) => ({
-        ...player,
-        usedAverage: averages[index],
-      }));
-      const result = generateTeams({ players, teamCount: 2, seed: "boundary" });
-      const totals = result.teams.map((team) =>
-        team.players.reduce((sum, player) => sum + player.usedAverage, 0),
-      );
-      expect(
-        Math.floor((Math.max(...totals) - Math.min(...totals)) * 0.9),
-      ).toBe(handicap);
-    },
-  );
-
-  it.each([
-    { averages: [180, 124], limit: 50 },
-    { averages: [112, 112, 112], limit: 100 },
-  ])(
-    "rejects a team handicap gap equal to the strict $limit limit",
-    ({ averages, limit }) => {
-      const players = group(averages.length).map((player, index) => ({
-        ...player,
-        usedAverage: averages[index],
-      }));
-      expect(() =>
-        generateTeams({ players, teamCount: 2, seed: "boundary" }),
-      ).toThrow(`handicap gap below ${limit}`);
-    },
-  );
-
   it("randomly selects eligible teams instead of always minimizing the gap", () => {
     const players = group(4).map((player, index) => ({
       ...player,
@@ -77,9 +40,9 @@ describe("team generator", () => {
       const totals = result.teams.map((team) =>
         team.players.reduce((sum, player) => sum + player.usedAverage, 0),
       );
-      gaps.add(Math.floor(Math.abs(totals[0] - totals[1]) * 0.9));
+      gaps.add(Math.abs(totals[0] - totals[1]));
     }
-    expect([...gaps].sort((a, b) => a - b)).toEqual([0, 36]);
+    expect([...gaps].sort((a, b) => a - b)).toEqual([0, 40]);
   });
 
   it.each([10, 11, 12, 13, 14, 15])(
@@ -88,7 +51,7 @@ describe("team generator", () => {
       const selected = group(count);
       const result = generateTeams({
         players: selected,
-        targetTeamSize: 3,
+        teamCount: 2,
         mode: "BALANCED",
         seed: `size-${count}`,
       });

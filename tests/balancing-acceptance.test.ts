@@ -7,7 +7,7 @@ import { generateTeams } from "@/lib/generator";
 
 describe("real-fixture balancing acceptance", () => {
   it.each([10, 11, 12, 13, 14, 15])(
-    "keeps 100 seeded assignments of %i players valid, within the handicap cap, and varied",
+    "keeps 100 seeded assignments of %i players valid, within the attendance-based average cap, and varied",
     (count) => {
       const players = realisticMondayGroup(count);
       const teamCount = benchmarkTeamCount(count);
@@ -29,13 +29,23 @@ describe("real-fixture balancing acceptance", () => {
         const sizes = result.teams.map((team) => team.players.length);
         expect(Math.min(...sizes)).toBeGreaterThan(0);
         expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
-        const totals = result.teams.map((team) =>
-          team.players.reduce((sum, player) => sum + player.usedAverage, 0),
+        const lowest = players.reduce((low, player) =>
+          player.usedAverage < low.usedAverage ? player : low,
         );
-        const handicapGap = Math.floor(
-          (Math.max(...totals) - Math.min(...totals)) * 0.9,
+        const baseTotals = result.teams.map((team) =>
+          team.players
+            .filter((player) => count % 2 === 0 || player.id !== lowest.id)
+            .reduce((sum, player) => sum + player.usedAverage, 0),
         );
-        expect(handicapGap).toBeLessThan(count % teamCount === 0 ? 50 : 100);
+        expect(Math.max(...baseTotals) - Math.min(...baseTotals)).toBeLessThan(
+          count % 2 === 0 ? 80 : 120,
+        );
+        if (count % 2 === 1) {
+          const index = result.teams.findIndex((team) =>
+            team.players.some((player) => player.id === lowest.id),
+          );
+          expect(baseTotals[index]).toBe(Math.min(...baseTotals));
+        }
         assignments.add(
           result.teams
             .map((team) =>

@@ -821,6 +821,7 @@ function PlayTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           players: playerList,
+          attendanceCount: options?.playersOverride?.length ?? selected.size,
           teamCount,
           mode: nextMode,
           seed: nextSeed,
@@ -2601,8 +2602,10 @@ function PlayTab({
                   : "Game 1"}
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
-              Balance: AVG below 160 / 160 and above pools. Random choice within
-              a team handicap gap below 50 (equal sizes) or 100 (unequal sizes).
+              Balance: AVG below 160 / 160 and above pools. Even attendance:
+              average-total gap below 80. Odd attendance: hold out one lowest-AVG
+              player, shuffle the rest with a gap below 120, then add that player
+              to the team with the lowest average total. Random eligible choice.
               Manual: start with empty teams and place each player.
             </p>
             <div className="actions" style={{ marginTop: 16 }}>

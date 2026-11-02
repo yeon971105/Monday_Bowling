@@ -18,11 +18,12 @@ afterAll(async () => {
 });
 
 it.each([
-  { average: 125, status: 200 },
-  { average: 124, status: 400 },
+  { average: 101, attendanceCount: 2, status: 200 },
+  { average: 100, attendanceCount: 2, status: 400 },
+  { average: 101, attendanceCount: 3, status: 400 },
 ])(
-  "generation API enforces the handicap cap: second average $average returns $status",
-  async ({ average, status }) => {
+  "generation API validates $attendanceCount attendees and average $average: returns $status",
+  async ({ average, attendanceCount, status }) => {
     const { POST } = await import("@/app/api/[...segments]/route");
     const response = await POST(
       new NextRequest("http://localhost/api/generate", {
@@ -38,6 +39,7 @@ it.each([
             projectedScore: usedAverage,
           })),
           teamCount: 2,
+          attendanceCount,
           mode: "BALANCED",
           seed: "api-test",
         }),
@@ -46,7 +48,12 @@ it.each([
     );
     expect(response.status).toBe(status);
     const body = await response.json();
-    if (status === 400) expect(body.error).toContain("handicap gap below 50");
+    if (status === 400)
+      expect(body.error).toContain(
+        attendanceCount === 3
+          ? "Every checked-in player needs an average"
+          : "average-total gap below 80",
+      );
     else expect(body.teams).toHaveLength(2);
   },
 );
